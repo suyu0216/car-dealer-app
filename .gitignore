@@ -1,0 +1,51 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# env files (can opt-in for committing if needed)
+.env*
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# 舊官網爬蟲的暫存資料（車輛 JSON + 下載下來的照片，體積大且是可重新產生的
+# 中間產物，不需要進版控）
+/scripts/migrate-super-garage/data/
+
+# Claude Code 本機設定（settings.local.json 是機器/使用者專屬設定，
+# scheduled_tasks.lock 是執行期的鎖檔）——不進版控。如果之後有共用的
+# .claude/settings.json（沒有 .local）則例外收進來。
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
