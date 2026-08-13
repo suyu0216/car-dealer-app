@@ -65,7 +65,7 @@ export async function login(
   });
 
   if (error || !data.user) {
-    return { error: "登入失敗，請確認 Email 或密碼是否正確。" };
+    return { error: `[TEMP DEBUG] ${error?.name ?? "no-error"} / ${error?.status ?? "?"} / ${error?.message ?? "no user"}` };
   }
 
   const { data: profile } = await supabase

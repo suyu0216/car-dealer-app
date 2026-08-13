@@ -11,7 +11,7 @@ export default async function RootPage() {
       redirect("/dashboard");
     }
   } catch (error) {
-    // 當抓不到 profile、未登入或 Supabase 連線錯誤時，安全強制導向登入頁
+    // 當抓不到 profile、未登入或 Supabase 連線錯誤時，安全強制導向登入頁，絕不跳 500
     redirect("/login");
   }
 }

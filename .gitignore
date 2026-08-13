@@ -49,3 +49,5 @@ next-env.d.ts
 # .claude/settings.json（沒有 .local）則例外收進來。
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
+
+.vercel
