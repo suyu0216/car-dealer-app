@@ -35,11 +35,7 @@ export function SettingsModule({
       return;
     }
 
-    const confirmMsg =
-      staff.role === "super_admin"
-        ? `確定要把最高管理者「${staff.name ?? "使用者"}」移出本車行嗎？（全平台帳號不會消失，僅解除與捷恒汽車的連結）`
-        : `確定要把「${staff.name ?? "員工"}」移出本車行嗎？`;
-
+    const confirmMsg = `確定要把「${staff.name ?? "此帳號"}」移出捷恒汽車名單嗎？（將解除與本車行的連結）`;
     if (!confirm(confirmMsg)) return;
 
     setDeletingId(staff.id);
@@ -55,11 +51,14 @@ export function SettingsModule({
         })
         .eq("id", staff.id);
 
-      if (error) throw error;
+      if (error) {
+        console.error("Supabase Error:", error);
+        throw new Error(error.message || "資料庫權限不足或更新失敗");
+      }
 
       setList((prev) => prev.filter((item) => item.id !== staff.id));
       router.refresh();
-      alert(`已成功將 ${staff.name ?? "該帳號"} 移出車行名單！`);
+      alert(`已成功將 ${staff.name ?? "該帳號"} 移出車行！`);
     } catch (err: any) {
       alert("移除失敗：" + (err.message || "發生未知錯誤"));
     } finally {
@@ -72,7 +71,7 @@ export function SettingsModule({
       <div className="border-b border-neutral-100 pb-4">
         <h2 className="text-lg font-bold text-neutral-900">帳號與權限管理</h2>
         <p className="mt-1 text-xs text-neutral-500">
-          若有非本車行的最高管理者或離職員工，請點選「移出本車行」解除連結。
+          若有非本車行的管理者或離職員工，請點選「移出本車行」解除連結。
         </p>
       </div>
 
