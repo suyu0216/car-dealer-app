@@ -1,5 +1,9 @@
-// 系統品牌設定。預設值是通用產品名稱，不代表任何特定車行 —— 車行自己的
-// 名稱存在 tenants.name，登入後的頁面一律顯示 tenants.name，而不是這裡。
-// 若要換品牌，改 .env.local 的 NEXT_PUBLIC_APP_NAME 即可，不用改程式碼。
-export const APP_NAME =
-  process.env.NEXT_PUBLIC_APP_NAME?.trim() || "AutoHub 車行雲端管理系統";
+// 系統品牌設定——這是「平台本身」的品牌名稱（瀏覽器分頁標題、登入頁、
+// 後台頂端小字），不是任何一間車行自己的名字；車行自己的名字存在
+// tenants.name，登入後的主控台標題、顧客看車頁一律顯示 tenants.name，
+// 不會受這裡影響。
+//
+// 2026-08 固定下來，之後若要更換品牌名稱，直接改這個常數、重新部署即可，
+// 不透過環境變數、也不會有任何後台介面可以改——這是刻意的，品牌名稱不是
+// 車行使用者該自己調整的東西。
+export const APP_NAME = "好心安雲端管理 HeartEase";
