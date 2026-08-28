@@ -354,7 +354,11 @@ export function ShowroomHomeSection({
                     </a>
                   )}
                 </SectionHead>
-                <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                {/* 2026-08：使用者反映頭像太小，她上傳的評論照片是要讓
+                    顧客一眼就感受到「口碑真的很好」的證據，不是裝飾用的
+                    小頭像——改回三欄（原本四欄留給小頭像版本，照片改大
+                    之後欄位不夠寬會被壓得更扁），把照片放大顯示。 */}
+                <div className="mt-8 grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
                   {reviews.map((review) => (
                     <ReviewCard key={review.id} review={review} />
                   ))}
@@ -565,10 +569,12 @@ function SectionHead({
  * 自己的「顯示更多」展開狀態（`expanded`），不會因為某一張卡展開，其他
  * 卡片跟著一起變。
  *
- * 2026-08 改版：頭像＋姓名＋星等放在卡片最上面一排，取代舊版「大圖在上、
- * 文字在下」的排法——車行貼評論時上傳的照片（review.photo_url）現在當
- * 頭像用，比原本整張當大圖更接近參考檔案的樣子，也不需要另外新增欄位；
- * 沒有照片的評論用姓名第一個字當預設頭像圓徽，不會整排卡片參差不齊。
+ * 2026-08：車行自己上傳的評論照片（見證照／合照）要大幅顯示，不是縮成
+ * 小小的頭像——這是使用者明確反映的意見：她要顧客一進來就直接、清楚
+ * 看到「口碑真的很好」的實際證據，照片本身就是說服力，縮小反而失去
+ * 這個效果。照片維持跟改版前同樣的尺寸比例（h-40 滿版寬），姓名／星等／
+ * 來源改放回照片下方，沒有配圖的評論就直接從姓名開始，不會補一個佔位
+ * 圓徽（原本的設計就是這樣，沒有照片不強加視覺元素）。
  *
  * 「顯示更多」按鈕要不要出現，不是用字數猜的（不同字型寬度、不同螢幕
  * 寬度下同樣字數換行行數不一樣，字數門檻很容易誤判），改成真的量測：
@@ -593,23 +599,19 @@ function ReviewCard({ review }: { review: TenantReview }) {
 
   return (
     <div className="flex flex-col gap-3 rounded-2xl border border-[#eae7e2] bg-white p-5">
-      <div className="flex items-center gap-3">
-        {review.photo_url ? (
-          // eslint-disable-next-line @next/next/no-img-element -- 見 showroom-lightbox.tsx 的說明
-          <img
-            src={review.photo_url}
-            alt={review.author_name}
-            className="h-[46px] w-[46px] shrink-0 rounded-full border-2 border-white object-cover shadow-[0_0_0_1px_#eae7e2]"
-          />
-        ) : (
-          <div className="flex h-[46px] w-[46px] shrink-0 items-center justify-center rounded-full border-2 border-white bg-[#171717] font-showroom-display text-sm text-white shadow-[0_0_0_1px_#eae7e2]">
-            {review.author_name.slice(0, 1)}
-          </div>
-        )}
-        <div className="min-w-0">
-          <p className="truncate text-[13.5px] font-extrabold text-[#171717]">{review.author_name}</p>
+      {review.photo_url && (
+        <FadeImage
+          src={review.photo_url}
+          alt={review.author_name}
+          className="h-40 w-full rounded-xl"
+          imgClassName="object-cover"
+        />
+      )}
+      <div>
+        <p className="text-[13.5px] font-extrabold text-[#171717]">{review.author_name}</p>
+        <div className="mt-1 flex items-center gap-2">
           <GoogleStars rating={review.rating} />
-          <p className="mt-0.5 text-[10.5px] text-[#6b6e74]">Google 評論</p>
+          <span className="text-[10.5px] text-[#6b6e74]">Google 評論</span>
         </div>
       </div>
       <p
