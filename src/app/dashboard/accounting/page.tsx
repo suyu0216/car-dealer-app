@@ -1,0 +1,526 @@
+"use client";
+
+import { useState, useEffect, useCallback } from "react";
+import { createClient } from "@/lib/supabase/client";
+import { CashPoolModule } from "../_components/cash-pool-module";
+import { PayrollModule } from "../_components/payroll-module";
+import { ProfitShareModule } from "../_components/profit-share-module";
+import { getEffectivePermissions } from "@/lib/permissions";
+import type { Profile, Tenant } from "@/lib/supabase/types";
+
+type CashPoolCar = {
+  id: string;
+  brand: string | null;
+  model_name: string;
+  paid_amount: number | null;
+  payment_method: "bank_transfer" | "debt_settlement" | "cash" | null;
+  created_at: string;
+  /** 這輛車結帳（售出）封存的當下時間——「薪資單」分頁拿這個欄位判斷
+   * 業務抽成算哪個月，因為安安希望是「當月結案、當月發」。null 表示
+   * 這輛車還沒結案。「淨利／分潤試算」分頁也是拿這個欄位判斷月份歸屬。 */
+  closed_at: string | null;
+  /** 以下三個欄位「淨利／分潤試算」分頁專用，其餘分頁不會用到——車輛
+   * 實際成交價、掛牌價、結帳當下的總成本快照，見 profit-share-module.tsx
+   * 開頭的淨利公式說明。 */
+  status: string;
+  final_price: number | null;
+  selling_price: number | null;
+  closed_total_cost: number | null;
+};
+
+type PayrollDeal = {
+  id: string;
+  car_id: string;
+  customer_name: string;
+  final_price: number;
+  deposit_amount: number | null;
+  balance_amount: number | null;
+  payment_method: "cash" | "bank" | null;
+  status: "draft" | "signed" | "delivered";
+  salesperson_id: string | null;
+  commission_amount: number | null;
+  created_at: string;
+};
+
+type ManualTransaction = {
+  id: string;
+  type: "income" | "expense";
+  amount: number;
+  payment_method: "cash" | "bank" | null;
+  date: string;
+  category: string;
+  note: string | null;
+};
+
+type StaffOption = { id: string; name: string | null };
+
+type CashPoolProfile = Pick<Profile, "id" | "role" | "can_view_cost" | "can_view_salary" | "can_edit_cars" | "tenant_id">;
+type CashPoolTenant = Pick<
+  Tenant,
+  | "cash_opening_balance"
+  | "bank_opening_balance"
+  | "cash_pool_started_at"
+  | "profit_share_enabled"
+  | "profit_share_equity_percent"
+>;
+
+type CompanyExpense = {
+  id: string;
+  expense_date: string;
+  category: string;
+  title: string;
+  amount: number;
+  payment_method: string;
+  payer_name: string | null;
+  invoice_number: string | null;
+  /** 這筆開銷（主要是「人事薪資」類別）發給哪位員工——給「薪資單」分頁
+   * 自動加總這個人的底薪用，見 payroll-module.tsx。其餘類別留 null。 */
+  employee_profile_id: string | null;
+  note: string | null;
+};
+
+export default function AccountingPage() {
+  const supabase = createClient();
+  const [activeTab, setActiveTab] = useState<"company" | "summary" | "payroll" | "profitShare">("company");
+  const [expenses, setExpenses] = useState<CompanyExpense[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  // 「資金總覽」水池／「薪資單」都要用的額外資料——跟這個頁面原本查
+  // company_expenses 同一套「client 端直接查、靠 RLS 自動限定自己車行」
+  // 的作法，見 cash-pool-module.tsx / payroll-module.tsx。
+  const [cashPoolProfile, setCashPoolProfile] = useState<CashPoolProfile | null>(null);
+  const [cashPoolTenant, setCashPoolTenant] = useState<CashPoolTenant | null>(null);
+  const [cashPoolCars, setCashPoolCars] = useState<CashPoolCar[]>([]);
+  const [payrollDeals, setPayrollDeals] = useState<PayrollDeal[]>([]);
+  const [manualTransactions, setManualTransactions] = useState<ManualTransaction[]>([]);
+  const [staffList, setStaffList] = useState<StaffOption[]>([]);
+
+  // 表單 State
+  const [expenseDate, setExpenseDate] = useState(new Date().toISOString().split("T")[0]);
+  const [category, setCategory] = useState("水電費");
+  const [title, setTitle] = useState("");
+  const [amount, setAmount] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState("匯款");
+  const [payerName, setPayerName] = useState("");
+  const [invoiceNumber, setInvoiceNumber] = useState("");
+  const [employeeProfileId, setEmployeeProfileId] = useState("");
+  const [note, setNote] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  // 載入公司開銷列表
+  const fetchExpenses = async () => {
+    setLoading(true);
+    const { data, error } = await supabase
+      .from("company_expenses")
+      .select("*")
+      .order("expense_date", { ascending: false });
+
+    if (!error && data) {
+      setExpenses(data);
+    }
+    setLoading(false);
+  };
+
+  // 資金總覽／薪資單需要的資料：目前使用者的權限/車行、車行起算點設定、
+  // 全體員工名單、以及成交合約(deals)／進貨付款(cars)／手動記帳
+  // (transactions) 三個來源，全部算在同一個 fetch 裡，供新增/刪除紀錄後
+  // 重新呼叫來刷新畫面。
+  const fetchSharedData = useCallback(async () => {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return;
+
+    const { data: profileData } = await supabase
+      .from("profiles")
+      .select("id, tenant_id, role, can_view_cost, can_view_salary, can_edit_cars")
+      .eq("id", user.id)
+      .single();
+    if (profileData) setCashPoolProfile(profileData as CashPoolProfile);
+
+    if (profileData?.tenant_id) {
+      const { data: tenantData } = await supabase
+        .from("tenants")
+        .select(
+          "cash_opening_balance, bank_opening_balance, cash_pool_started_at, profit_share_enabled, profit_share_equity_percent"
+        )
+        .eq("id", profileData.tenant_id)
+        .single();
+      if (tenantData) setCashPoolTenant(tenantData as CashPoolTenant);
+    }
+
+    const [{ data: carsData }, { data: dealsData }, { data: txData }, { data: staffData }] = await Promise.all([
+      supabase
+        .from("cars")
+        .select(
+          "id, brand, model_name, paid_amount, payment_method, created_at, closed_at, status, final_price, selling_price, closed_total_cost"
+        ),
+      supabase
+        .from("deals")
+        .select(
+          "id, car_id, customer_name, final_price, deposit_amount, balance_amount, payment_method, status, salesperson_id, commission_amount, created_at"
+        ),
+      supabase.from("transactions").select("*").order("date", { ascending: false }),
+      supabase.from("profiles").select("id, name").order("name"),
+    ]);
+    if (carsData) setCashPoolCars(carsData as CashPoolCar[]);
+    if (dealsData) setPayrollDeals(dealsData as PayrollDeal[]);
+    if (txData) setManualTransactions(txData as ManualTransaction[]);
+    if (staffData) setStaffList(staffData as StaffOption[]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    fetchExpenses();
+    fetchSharedData();
+  }, [fetchSharedData]);
+
+  // 新增開銷
+  const handleAddExpense = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!title || !amount) {
+      alert("請填寫項目名稱與金額");
+      return;
+    }
+
+    setSubmitting(true);
+    const { error } = await supabase.from("company_expenses").insert({
+      expense_date: expenseDate,
+      category,
+      title,
+      amount: parseFloat(amount),
+      payment_method: paymentMethod,
+      payer_name: payerName || null,
+      invoice_number: invoiceNumber || null,
+      // 只有「人事薪資」類別才有意義，其他類別表單上不會顯示這個欄位、
+      // employeeProfileId 會維持空字串 → null。
+      employee_profile_id: employeeProfileId || null,
+      note: note || null,
+    });
+
+    if (error) {
+      alert("新增失敗：" + error.message);
+    } else {
+      alert("成功新增一筆公司開銷！");
+      // 清空表單
+      setTitle("");
+      setAmount("");
+      setNote("");
+      setInvoiceNumber("");
+      setEmployeeProfileId("");
+      fetchExpenses();
+    }
+    setSubmitting(false);
+  };
+
+  // 計算總公司開銷
+  const totalCompanyExpenses = expenses.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+  const staffNameById = new Map(staffList.map((s) => [s.id, s.name ?? "未命名"]));
+
+  return (
+    <div className="mx-auto max-w-7xl p-6">
+      {/* 頁面標頭 */}
+      <div className="mb-6 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-neutral-900">📊 會計與財務管理</h1>
+          <p className="text-sm text-neutral-500">獨立管理公司營運開銷與車輛交易財務</p>
+        </div>
+      </div>
+
+      {/* 分頁 Tab 切換 */}
+      <div className="mb-6 flex border-b border-neutral-200">
+        <button
+          onClick={() => setActiveTab("company")}
+          className={`px-5 py-3 font-semibold text-sm transition border-b-2 ${
+            activeTab === "company"
+              ? "border-blue-600 text-blue-600"
+              : "border-transparent text-neutral-500 hover:text-neutral-700"
+          }`}
+        >
+          🏢 公司營運開銷 (水電/租金/雜項)
+        </button>
+        <button
+          onClick={() => setActiveTab("summary")}
+          className={`px-5 py-3 font-semibold text-sm transition border-b-2 ${
+            activeTab === "summary"
+              ? "border-blue-600 text-blue-600"
+              : "border-transparent text-neutral-500 hover:text-neutral-700"
+          }`}
+        >
+          💰 資金總覽（現金／銀行水位）
+        </button>
+        <button
+          onClick={() => setActiveTab("payroll")}
+          className={`px-5 py-3 font-semibold text-sm transition border-b-2 ${
+            activeTab === "payroll"
+              ? "border-blue-600 text-blue-600"
+              : "border-transparent text-neutral-500 hover:text-neutral-700"
+          }`}
+        >
+          🧾 薪資單
+        </button>
+        {/* 「淨利／分潤試算」預設關閉，但分頁按鈕本身一律顯示——沒開啟時
+            點進去會看到啟用引導畫面（見 ProfitShareModule），不是直接
+            把分頁藏起來，管理員才找得到「原來這裡可以開」。 */}
+        <button
+          onClick={() => setActiveTab("profitShare")}
+          className={`px-5 py-3 font-semibold text-sm transition border-b-2 ${
+            activeTab === "profitShare"
+              ? "border-blue-600 text-blue-600"
+              : "border-transparent text-neutral-500 hover:text-neutral-700"
+          }`}
+        >
+          🧮 淨利／分潤試算
+        </button>
+      </div>
+
+      {/* 分支 1：公司營運開銷 */}
+      {activeTab === "company" && (
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+          {/* 左側：新增開銷表單 */}
+          <div className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
+            <h2 className="text-lg font-bold text-neutral-900 border-b pb-3 mb-4">
+              ➕ 記一筆公司開銷
+            </h2>
+            <form onSubmit={handleAddExpense} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-neutral-600 mb-1">支出日期</label>
+                <input
+                  type="date"
+                  value={expenseDate}
+                  onChange={(e) => setExpenseDate(e.target.value)}
+                  className="w-full rounded-lg border border-neutral-300 p-2 text-sm focus:border-blue-500 focus:outline-none"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-neutral-600 mb-1">費用類別</label>
+                <select
+                  value={category}
+                  onChange={(e) => setCategory(e.target.value)}
+                  className="w-full rounded-lg border border-neutral-300 p-2 text-sm focus:border-blue-500 focus:outline-none"
+                >
+                  <option value="水電費">💧⚡ 水電瓦斯</option>
+                  <option value="網路通訊">🌐 網路與電話費</option>
+                  <option value="場地租金">🏠 展場/停車場租金</option>
+                  <option value="廣告行銷">📣 廣告與行銷費</option>
+                  <option value="人事薪資">👤 底薪/獎金</option>
+                  <option value="行政雜項">🛠️ 辦公用品/雜支</option>
+                  <option value="專業服務">⚖️ 會計/法律服務費</option>
+                </select>
+              </div>
+
+              {/* 發給哪位員工：只有「人事薪資」類別才需要，讓「薪資單」分頁
+                  能自動把這筆底薪加進對應員工的薪資單。 */}
+              {category === "人事薪資" && (
+                <div>
+                  <label className="block text-xs font-bold text-neutral-600 mb-1">發給員工</label>
+                  <select
+                    value={employeeProfileId}
+                    onChange={(e) => setEmployeeProfileId(e.target.value)}
+                    className="w-full rounded-lg border border-neutral-300 p-2 text-sm focus:border-blue-500 focus:outline-none"
+                  >
+                    <option value="">請選擇員工</option>
+                    {staffList.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name ?? "未命名"}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-[11px] text-neutral-400">
+                    選了才會自動出現在這位員工的「薪資單」分頁裡，不選也可以照樣存檔，只是薪資單那邊看不到。
+                  </p>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-xs font-bold text-neutral-600 mb-1">項目名稱</label>
+                <input
+                  type="text"
+                  placeholder="例如：7月份展示場電費"
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  className="w-full rounded-lg border border-neutral-300 p-2 text-sm focus:border-blue-500 focus:outline-none"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-neutral-600 mb-1">金額 (NT$)</label>
+                <input
+                  type="number"
+                  placeholder="0"
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value)}
+                  className="w-full rounded-lg border border-neutral-300 p-2 text-sm focus:border-blue-500 focus:outline-none"
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-xs font-bold text-neutral-600 mb-1">付款方式</label>
+                  <select
+                    value={paymentMethod}
+                    onChange={(e) => setPaymentMethod(e.target.value)}
+                    className="w-full rounded-lg border border-neutral-300 p-2 text-sm focus:border-blue-500 focus:outline-none"
+                  >
+                    <option value="匯款">銀行匯款</option>
+                    <option value="現金">零用金/現金</option>
+                    <option value="信用卡">公司信用卡</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-neutral-600 mb-1">經手/請款人</label>
+                  <input
+                    type="text"
+                    placeholder="經手人"
+                    value={payerName}
+                    onChange={(e) => setPayerName(e.target.value)}
+                    className="w-full rounded-lg border border-neutral-300 p-2 text-sm focus:border-blue-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-neutral-600 mb-1">發票/收據號碼 (選填)</label>
+                <input
+                  type="text"
+                  placeholder="例如：AB12345678"
+                  value={invoiceNumber}
+                  onChange={(e) => setInvoiceNumber(e.target.value)}
+                  className="w-full rounded-lg border border-neutral-300 p-2 text-sm focus:border-blue-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-neutral-600 mb-1">備註 (選填)</label>
+                <textarea
+                  rows={2}
+                  placeholder="補充說明..."
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  className="w-full rounded-lg border border-neutral-300 p-2 text-sm focus:border-blue-500 focus:outline-none"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={submitting}
+                className="w-full rounded-xl bg-blue-600 py-2.5 font-bold text-white shadow hover:bg-blue-700 disabled:opacity-50 transition"
+              >
+                {submitting ? "儲存中..." : "新增開銷紀錄"}
+              </button>
+            </form>
+          </div>
+
+          {/* 右側：開銷列表歷史 */}
+          <div className="lg:col-span-2 rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
+            <div className="flex items-center justify-between border-b pb-3 mb-4">
+              <h2 className="text-lg font-bold text-neutral-900">📋 公司營運開銷明細</h2>
+              <span className="text-xs font-semibold text-neutral-500">
+                累計總支出：<strong className="text-red-600 text-sm">${totalCompanyExpenses.toLocaleString()}</strong>
+              </span>
+            </div>
+
+            {loading ? (
+              <p className="text-center py-8 text-neutral-400 text-sm">資料載入中...</p>
+            ) : expenses.length === 0 ? (
+              <p className="text-center py-8 text-neutral-400 text-sm">目前尚無公司開銷紀錄</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead>
+                    <tr className="border-b bg-neutral-50 text-xs font-bold text-neutral-500">
+                      <th className="p-3">日期</th>
+                      <th className="p-3">類別</th>
+                      <th className="p-3">項目名稱</th>
+                      <th className="p-3">方式</th>
+                      <th className="p-3 text-right">金額</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-neutral-100">
+                    {expenses.map((item) => (
+                      <tr key={item.id} className="hover:bg-neutral-50">
+                        <td className="p-3 whitespace-nowrap text-neutral-600 text-xs">{item.expense_date}</td>
+                        <td className="p-3 whitespace-nowrap">
+                          <span className="rounded bg-neutral-100 px-2 py-1 text-xs font-semibold text-neutral-700">
+                            {item.category}
+                          </span>
+                        </td>
+                        <td className="p-3 font-semibold text-neutral-900">
+                          {item.title}
+                          {item.employee_profile_id && (
+                            <span className="ml-2 rounded bg-[#FBF1E4] px-1.5 py-0.5 text-[11px] font-normal text-[#A6793D]">
+                              {staffNameById.get(item.employee_profile_id) ?? "已離職員工"}
+                            </span>
+                          )}
+                          {item.note && <span className="block text-xs font-normal text-neutral-400">{item.note}</span>}
+                        </td>
+                        <td className="p-3 whitespace-nowrap text-xs text-neutral-500">{item.payment_method}</td>
+                        <td className="p-3 text-right font-bold text-red-600 whitespace-nowrap">
+                          -${Number(item.amount).toLocaleString()}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 分支 2：資金總覽（現金／銀行水池） */}
+      {activeTab === "summary" && (
+        <CashPoolModule
+          tenant={cashPoolTenant}
+          isTenantAdmin={cashPoolProfile?.role === "tenant_admin"}
+          canViewCost={!!cashPoolProfile && getEffectivePermissions(cashPoolProfile).canViewCost}
+          deals={payrollDeals}
+          cars={cashPoolCars}
+          expenses={expenses.map((e) => ({
+            id: e.id,
+            amount: e.amount,
+            payment_method: e.payment_method,
+            expense_date: e.expense_date,
+            title: e.title,
+          }))}
+          manualTransactions={manualTransactions}
+          onDataChanged={fetchSharedData}
+        />
+      )}
+
+      {/* 分支 3：薪資單（底薪 + 抽成，按月份/員工看） */}
+      {activeTab === "payroll" && (
+        <PayrollModule
+          staff={staffList}
+          deals={payrollDeals}
+          cars={cashPoolCars}
+          expenses={expenses}
+          canManageStaff={!!cashPoolProfile && getEffectivePermissions(cashPoolProfile).canManageStaff}
+          canViewSalary={!!cashPoolProfile && getEffectivePermissions(cashPoolProfile).canViewSalary}
+          currentUserId={cashPoolProfile?.id ?? null}
+        />
+      )}
+
+      {/* 分支 4：淨利／分潤試算——只給有股東/合夥人分潤安排的車行用，
+          預設關閉，見 profit-share-module.tsx 開頭的說明。 */}
+      {activeTab === "profitShare" && cashPoolTenant && (
+        <ProfitShareModule
+          tenant={cashPoolTenant}
+          cars={cashPoolCars}
+          expenses={expenses}
+          isTenantAdmin={cashPoolProfile?.role === "tenant_admin"}
+          canViewFinancials={
+            !!cashPoolProfile &&
+            getEffectivePermissions(cashPoolProfile).canViewCost &&
+            getEffectivePermissions(cashPoolProfile).canViewSalary
+          }
+          onSettingsChanged={fetchSharedData}
+        />
+      )}
+    </div>
+  );
+}
