@@ -496,3 +496,118 @@ body {
     animation: none;
   }
 }
+
+/* ============================================================
+   前台展間「導流曲線」按鈕（.btn-flow）＋頁首綠色膠囊 CTA（.jh-cta）
+   ——2026-08：使用者上傳全新設計的品牌簡介／現有車輛首圖橫幅參考檔案
+   （brandintrofinal.html／inventoryv4magazine.html），直接指名「改成
+   這樣」。這兩顆按鈕是參考檔案原本就有的手法，這裡原封不動保留：
+   - .btn-flow：首圖橫幅正中央的主要行動按鈕，hover 時一條曲線從按鈕
+     下緣「畫出來」（SVG stroke-dashoffset 動畫，見 flow-line 那段）。
+     預設是品牌簡介頁用的紅色實心；疊加 .btn-flow-dark 是現有車輛頁
+     焦點車款用的曜石灰底；.btn-flow-ghost／.btn-flow-ghost-dark 是
+     兩邊「加 LINE」這類次要按鈕的白底／透明描邊版本——跟其他按鈕家族
+     （.btn-ignite/.btn-ignite-line）同一種「基底 + 修飾 class」寫法，
+     不重複定義四份幾乎一樣的規則。
+   - .jh-cta：頁首右上角「加 LINE 專人服務」膠囊，取代舊版的點火圓鍵
+     ＋文字組合（那組維持只用在手機浮動按鈕／首圖「放大檢視」，見
+     showroom-shell.tsx 的說明），改用參考檔案原本的 LINE 綠漸層膠囊，
+     跟參考檔案兩份 html 的頁首一致。
+   ============================================================ */
+.btn-flow {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: #fff;
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+  background: linear-gradient(135deg, #ff4757 0%, #e2192f 45%, #7a0f1e 100%);
+  box-shadow:
+    0 14px 26px -12px rgba(226, 25, 47, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  transition:
+    transform 0.25s ease,
+    box-shadow 0.25s ease;
+  text-decoration: none;
+}
+.btn-flow:hover {
+  transform: translateY(-2px);
+}
+.btn-flow:active {
+  transform: translateY(0);
+}
+.btn-flow.btn-flow-dark {
+  background: radial-gradient(120% 160% at 22% 0%, #3c3f45 0%, #17181b 62%);
+  box-shadow:
+    0 14px 26px -14px rgba(0, 0, 0, 0.75),
+    inset 0 1px 0 rgba(255, 255, 255, 0.09);
+}
+.btn-flow.btn-flow-ghost {
+  color: #1a1b1d;
+  background: linear-gradient(180deg, #ffffff 0%, #ececec 100%);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.7) inset,
+    0 2px 8px -4px rgba(0, 0, 0, 0.15);
+  border: 1px solid #eae7e2;
+}
+.btn-flow.btn-flow-ghost-dark {
+  color: #fff;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  box-shadow: none;
+}
+.btn-flow .flow-line {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 7px;
+  height: 14px;
+  width: calc(100% - 32px);
+  overflow: visible;
+  pointer-events: none;
+}
+.btn-flow .flow-line path {
+  stroke-dasharray: 200;
+  stroke-dashoffset: 200;
+  transition: stroke-dashoffset 0.7s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.btn-flow:hover .flow-line path {
+  stroke-dashoffset: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .btn-flow .flow-line path {
+    transition: none;
+  }
+}
+
+.jh-cta {
+  display: inline-flex;
+  align-items: center;
+  font-size: 13px;
+  font-weight: 700;
+  color: #08210f;
+  text-decoration: none;
+  padding: 10px 20px;
+  border-radius: 999px;
+  white-space: nowrap;
+  background: linear-gradient(180deg, #4be08a 0%, #06c755 55%, #05a648 100%);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.45) inset,
+    0 8px 18px -10px rgba(0, 0, 0, 0.6);
+  transition:
+    transform 0.2s ease,
+    box-shadow 0.2s ease;
+}
+.jh-cta:hover {
+  transform: translateY(-1px);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.45) inset,
+    0 10px 20px -8px rgba(0, 0, 0, 0.65);
+}
+.jh-cta:active {
+  transform: translateY(0);
+}
