@@ -47,13 +47,13 @@ export function ShowroomLightbox({
         type="button"
         onClick={onClose}
         aria-label="關閉放大檢視"
-        className="absolute right-4 top-4 rounded-full bg-white/10 px-3 py-1.5 text-lg text-white transition hover:bg-white/20"
+        className="absolute right-4 top-4 rounded-full border border-white/25 bg-white/10 px-3 py-1.5 text-lg text-white transition-all duration-200 ease-out hover:border-[#BFA074]/70 hover:bg-white/20 hover:shadow-[0_0_0_3px_rgba(191,160,116,0.3)] active:scale-90 active:shadow-[0_0_0_5px_rgba(191,160,116,0.45)]"
       >
         ✕
       </button>
 
       {total > 1 && (
-        <span className="absolute left-4 top-4 rounded-full bg-white/10 px-3 py-1 text-sm text-white/80">
+        <span className="absolute left-4 top-4 rounded-full bg-white/10 px-3 py-1 text-sm text-white/70">
           {index + 1} / {total}
         </span>
       )}
@@ -66,7 +66,7 @@ export function ShowroomLightbox({
             onIndexChange((index - 1 + total) % total);
           }}
           aria-label="上一張"
-          className="absolute left-2 top-1/2 -translate-y-1/2 rounded-full bg-white/10 px-3 py-3 text-xl text-white transition hover:bg-white/20 sm:left-4"
+          className="absolute left-2 top-1/2 -translate-y-1/2 rounded-full border border-white/25 bg-white/10 px-3 py-3 text-xl text-white transition-all duration-200 ease-out hover:border-[#BFA074]/70 hover:bg-white/20 hover:shadow-[0_0_0_3px_rgba(191,160,116,0.3)] active:scale-90 active:shadow-[0_0_0_5px_rgba(191,160,116,0.45)] sm:left-4"
         >
           ‹
         </button>
@@ -88,7 +88,7 @@ export function ShowroomLightbox({
             onIndexChange((index + 1) % total);
           }}
           aria-label="下一張"
-          className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full bg-white/10 px-3 py-3 text-xl text-white transition hover:bg-white/20 sm:right-4"
+          className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full border border-white/25 bg-white/10 px-3 py-3 text-xl text-white transition-all duration-200 ease-out hover:border-[#BFA074]/70 hover:bg-white/20 hover:shadow-[0_0_0_3px_rgba(191,160,116,0.3)] active:scale-90 active:shadow-[0_0_0_5px_rgba(191,160,116,0.45)] sm:right-4"
         >
           ›
         </button>
