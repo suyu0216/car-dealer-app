@@ -4,18 +4,23 @@ import type { Car } from "@/lib/supabase/types";
 import { formatCurrency } from "@/lib/format";
 import { CarStatusBadge } from "./car-status-badge";
 import { CarAgingBadge } from "./car-aging-badge";
+import { CarTitleBadge } from "./car-title-badge";
 import { CarQuickActions } from "./car-quick-actions";
 
 export function CarCard({
   car,
   canViewCost,
   canEditCars,
+  repairCost,
   onView,
   onEdit,
 }: {
   car: Car;
   canViewCost: boolean;
   canEditCars: boolean;
+  /** 這輛車已核准撥款的整備維修費用加總，見 cars-manager.tsx 的
+   * computeApprovedPrepCostByCar()。 */
+  repairCost: number;
   onView: (car: Car) => void;
   onEdit: (car: Car) => void;
 }) {
@@ -30,6 +35,8 @@ export function CarCard({
           <img
             src={car.image_url}
             alt={`${car.brand ?? ""} ${car.model_name}`}
+            loading="lazy"
+            decoding="async"
             className="h-full w-full object-cover transition duration-300 group-hover:scale-105"
           />
         ) : (
@@ -51,10 +58,13 @@ export function CarCard({
         <h3 className="truncate text-sm font-semibold text-neutral-800">{car.model_name}</h3>
 
         <div className="mt-1.5 flex flex-wrap gap-1.5">
+          {car.is_featured && <MiniBadge>⭐ 熱門推薦</MiniBadge>}
+          {car.body_type && <MiniBadge>{car.body_type}</MiniBadge>}
           {car.year && <MiniBadge>{car.year} 年式</MiniBadge>}
           {car.mileage != null && <MiniBadge>{car.mileage.toLocaleString("zh-TW")} km</MiniBadge>}
           {car.color && <MiniBadge>{car.color}</MiniBadge>}
           <CarAgingBadge car={car} />
+          <CarTitleBadge car={car} canViewCost={canViewCost} />
         </div>
 
         <div className="mt-3 flex items-end justify-between">
@@ -66,6 +76,11 @@ export function CarCard({
             {car.floor_price != null && (
               <p className="text-[11px] text-neutral-400">
                 底價 {canViewCost ? formatCurrency(car.floor_price) : "🔒 權限不足"}
+              </p>
+            )}
+            {repairCost > 0 && (
+              <p className="text-[11px] text-neutral-400">
+                整備費 {canViewCost ? formatCurrency(repairCost) : "🔒 權限不足"}
               </p>
             )}
           </div>

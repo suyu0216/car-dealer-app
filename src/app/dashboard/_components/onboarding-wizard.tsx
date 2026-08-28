@@ -50,7 +50,9 @@ export function OnboardingWizard({ tenant }: { tenant: Tenant }) {
         </div>
 
         <div className="mt-8">
-          <BrandSettingsModule tenant={tenant} />
+          {/* 新車商第一次 Onboarding，一定還沒貼過任何影片，直接給空
+              陣列——影音專區之後可以在「品牌設定」分頁補貼。 */}
+          <BrandSettingsModule tenant={tenant} tenantVideos={[]} />
         </div>
 
         <div className="mt-4 text-center">

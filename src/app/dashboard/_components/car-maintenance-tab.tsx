@@ -1,13 +1,14 @@
 "use client";
 
 import { useActionState, useEffect, useState, useTransition } from "react";
-import type { Car, RepairItem, RepairItemStatus, Role } from "@/lib/supabase/types";
-import { formatCurrency } from "@/lib/format";
+import type { Car, RepairItem, RepairItemCategory, RepairItemStatus, Role } from "@/lib/supabase/types";
+import { formatCurrency, formatDate } from "@/lib/format";
 import {
   createRepairItem,
   reviewRepairItem,
   type RepairItemFormState,
 } from "../repair-items-actions";
+import { REPAIR_ITEM_CATEGORIES } from "@/lib/repair-item-constants";
 import { useUnsavedChangesGuard } from "./use-unsaved-changes-guard";
 
 export const REPAIR_STATUS_LABEL: Record<RepairItemStatus, string> = {
@@ -23,6 +24,12 @@ export const REPAIR_STATUS_STYLE: Record<RepairItemStatus, string> = {
   rejected: "bg-[#FBEAEA] text-[#B75454] ring-[#F0D3D3]",
 };
 
+export const REPAIR_CATEGORY_ICON: Record<RepairItemCategory, string> = {
+  維修: "🔧",
+  美容: "✨",
+  其他: "📎",
+};
+
 function totalCost(car: Car, approvedPrepCost: number) {
   return Number(car.purchase_price) + approvedPrepCost + Number(car.transfer_fee ?? 0);
 }
@@ -33,6 +40,7 @@ export function CarMaintenanceTab({
   role,
   canViewCost,
   receiptUrls,
+  staff,
 }: {
   car: Car;
   repairItems: RepairItem[];
@@ -43,6 +51,9 @@ export function CarMaintenanceTab({
   canViewCost: boolean;
   /** evidence_path -> 伺服器簽發的短效期 signed URL（見 dashboard/page.tsx）。 */
   receiptUrls: Record<string, string>;
+  /** 「墊款業務/經手人」下拉選單用——同車行的員工清單，新邀請的員工會
+   * 自動出現在這裡，不用再手動打字。 */
+  staff: { id: string; name: string | null }[];
 }) {
   const canReview = role === "tenant_admin";
 
@@ -63,7 +74,7 @@ export function CarMaintenanceTab({
     <div className="space-y-6">
       {isClosed && (
         <p className="rounded-lg bg-[#EEF2ED] px-3 py-2 text-xs text-[#5F7563]">
-          🔒 這輛車已於 {new Date(car.closed_at!).toLocaleDateString("zh-TW")}{" "}
+          🔒 這輛車已於 {formatDate(car.closed_at)}{" "}
           結帳封存，以下成本數字是售出當下的快照，不會再隨新的維修請款變動。
         </p>
       )}
@@ -83,7 +94,7 @@ export function CarMaintenanceTab({
         </section>
       )}
 
-      <RepairItemForm carId={car.id} />
+      <RepairItemForm carId={car.id} staff={staff} />
 
       <RepairItemList items={repairItems} canReview={canReview} receiptUrls={receiptUrls} />
     </div>
@@ -184,7 +195,13 @@ function CostChip({
 
 const formInitialState: RepairItemFormState = {};
 
-function RepairItemForm({ carId }: { carId: string }) {
+function RepairItemForm({
+  carId,
+  staff,
+}: {
+  carId: string;
+  staff: { id: string; name: string | null }[];
+}) {
   const [open, setOpen] = useState(false);
   const [resetKey, setResetKey] = useState(0);
   const [state, formAction, pending] = useActionState(createRepairItem, formInitialState);
@@ -239,8 +256,27 @@ function RepairItemForm({ carId }: { carId: string }) {
           <RepairField label="金額" name="amount" type="number" placeholder="0" required />
         </div>
         <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label htmlFor="category" className="block text-sm font-medium text-neutral-700">
+              類別
+            </label>
+            <select
+              id="category"
+              name="category"
+              defaultValue="維修"
+              className="mt-1 w-full rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm text-neutral-800 outline-none focus:border-[#BFA074] focus:bg-white"
+            >
+              {REPAIR_ITEM_CATEGORIES.map((c) => (
+                <option key={c} value={c}>
+                  {REPAIR_CATEGORY_ICON[c]} {c}
+                </option>
+              ))}
+            </select>
+          </div>
           <RepairField label="廠商/保養廠名稱" name="vendor_name" placeholder="例如：三久烤漆廠" />
-          <RepairField label="墊款業務/經手人" name="handler_name" placeholder="姓名" />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <HandlerNameSelect staff={staff} />
         </div>
         <div className="grid grid-cols-2 gap-3">
           <RepairField label="單據號碼/發票號" name="receipt_number" />
@@ -287,6 +323,48 @@ function RepairItemForm({ carId }: { carId: string }) {
         </div>
       </form>
     </section>
+  );
+}
+
+/**
+ * 「墊款業務/經手人」下拉選單——原本是自由輸入文字，同一個人每次可能打
+ * 法不一樣（「小明」「王小明」…），沒辦法真的統計「誰經手了多少筆」。
+ * 改成從同車行的員工清單選，新邀請的員工會自動出現在這裡，不用另外
+ * 手動維護一份名單。存的還是純文字（跟 repair_items.handler_name 欄位
+ * 型別一致，不改資料庫），只是來源固定從員工清單選，不是手打——這裡故意
+ * 不加「其他/手動輸入」的退路，維修請款與會計、維修模組匯出的分頁跨檔案
+ * 匯出時共用這份清單，見 maintenance-module.tsx 也用到這個元件。
+ */
+export function HandlerNameSelect({
+  staff,
+  defaultValue,
+}: {
+  staff: { id: string; name: string | null }[];
+  defaultValue?: string;
+}) {
+  const names = Array.from(new Set(staff.map((s) => s.name).filter((n): n is string => !!n))).sort(
+    (a, b) => a.localeCompare(b)
+  );
+
+  return (
+    <div>
+      <label htmlFor="handler_name" className="block text-sm font-medium text-neutral-700">
+        墊款業務/經手人
+      </label>
+      <select
+        id="handler_name"
+        name="handler_name"
+        defaultValue={defaultValue ?? ""}
+        className="mt-1 w-full rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm text-neutral-800 outline-none focus:border-[#BFA074] focus:bg-white"
+      >
+        <option value="">請選擇</option>
+        {names.map((name) => (
+          <option key={name} value={name}>
+            {name}
+          </option>
+        ))}
+      </select>
+    </div>
   );
 }
 
@@ -363,12 +441,16 @@ export function RepairItemRow({
   canReview,
   receiptUrl,
   carLabel,
+  highlighted,
 }: {
   item: RepairItem;
   canReview: boolean;
   receiptUrl: string | undefined;
   /** 跨車輛列表（獨立維修模組）才需要顯示是哪一輛車，單一車輛的分頁裡不用。 */
   carLabel?: string;
+  /** 從通知鈴鐺點進來、傳送門指到這一筆——加上錨點 id 讓頁面可以自動
+   * 捲到這裡，並用外框反白幾秒，讓人一眼看到「就是這筆」。 */
+  highlighted?: boolean;
 }) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -381,13 +463,25 @@ export function RepairItemRow({
   }
 
   return (
-    <li className="rounded-xl border border-neutral-200 bg-white p-3">
+    <li
+      id={`repair-item-${item.id}`}
+      className={
+        "rounded-xl border bg-white p-3 transition " +
+        (highlighted ? "border-[#BFA074] ring-2 ring-[#BFA074] ring-offset-2" : "border-neutral-200")
+      }
+    >
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
           {carLabel && (
             <p className="text-xs font-medium text-[#A6793D]">{carLabel}</p>
           )}
-          <p className="text-sm font-medium text-neutral-800">{item.item_name}</p>
+          <p className="text-sm font-medium text-neutral-800">
+            <span aria-hidden className="mr-1">
+              {REPAIR_CATEGORY_ICON[item.category] ?? "🔧"}
+            </span>
+            {item.item_name}
+            <span className="ml-1.5 text-xs font-normal text-neutral-400">{item.category}</span>
+          </p>
           <p className="mt-0.5 text-xs text-neutral-500">
             {[item.vendor_name, item.handler_name && `經手人：${item.handler_name}`]
               .filter(Boolean)

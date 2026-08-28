@@ -1,26 +1,48 @@
 "use client";
 
-import { useState } from "react";
-import type { Car, Customer, Deal, RepairItem, Role, Tenant } from "@/lib/supabase/types";
+import { useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import type { Car, Customer, Deal, RepairItem, Role, Tenant, TenantVideo, TradeInRequest } from "@/lib/supabase/types";
 import type { EffectivePermissions } from "@/lib/permissions";
 import { CarsManager } from "./cars-manager";
 import { MaintenanceModule } from "./maintenance-module";
 import { CrmModule } from "./crm-module";
+import { TradeInModule } from "./trade-in-module";
 import { DealsModule } from "./deals-module";
 import { AnalyticsModule } from "./analytics-module";
 import { CommissionModule } from "./commission-module";
 import { SettingsModule, type StaffAccount } from "./settings-module";
 import { BrandSettingsModule } from "./brand-settings-module";
+import { MyContactModule } from "./my-contact-module";
 
 type ModuleKey =
   | "inventory"
   | "maintenance"
   | "crm"
+  | "tradeIns"
   | "deals"
   | "analytics"
   | "commission"
   | "branding"
-  | "settings";
+  | "settings"
+  | "myContact";
+
+const MODULE_KEYS: ModuleKey[] = [
+  "inventory",
+  "maintenance",
+  "crm",
+  "tradeIns",
+  "deals",
+  "analytics",
+  "commission",
+  "branding",
+  "settings",
+  "myContact",
+];
+
+function parseModuleParam(value: string | null): ModuleKey | null {
+  return value && (MODULE_KEYS as string[]).includes(value) ? (value as ModuleKey) : null;
+}
 
 export function DashboardShell({
   cars,
@@ -35,6 +57,9 @@ export function DashboardShell({
   permissions,
   tenant,
   tenantName,
+  myContact,
+  tradeInRequests,
+  tenantVideos,
 }: {
   cars: Car[];
   repairItems: RepairItem[];
@@ -49,64 +74,80 @@ export function DashboardShell({
   /** 車行完整資料，給「品牌設定」分頁編輯用。 */
   tenant: Tenant | null;
   tenantName?: string;
+  /** 目前登入者自己的公開聯繫方式，給「我的公開聯繫方式」分頁編輯用——
+   * 任何角色都看得到這個分頁，不受 permissions.canManageStaff 限制。 */
+  myContact: {
+    public_phone: string | null;
+    public_line_id: string | null;
+    show_public_contact: boolean;
+    public_bio: string | null;
+    public_avatar_url: string | null;
+  };
+  /** 公開展間「我要估車」表單送出的估價需求單清單，給「估車申請」分頁
+   * 用，見 trade-in-module.tsx。 */
+  tradeInRequests: TradeInRequest[];
+  /** 「影音專區」現有影片清單，給「品牌設定」分頁底下的
+   * VideoSettingsSection 用。 */
+  tenantVideos: TenantVideo[];
 }) {
-  const [active, setActive] = useState<ModuleKey>("inventory");
-  const pendingReviewCount = repairItems.filter((r) => r.status === "pending").length;
+  const searchParams = useSearchParams();
+  const moduleParam = searchParams.get("module");
 
-  // 導覽列本身就依權限決定要不要顯示某個模組——不是「顯示但擋住」，而是
-  // 一般業務根本看不到「車行經營數據看板」「帳號與權限管理」這兩個分頁
-  // 存在，跟「業務薪資」在沒有 can_view_salary 時仍保留分頁、只是內容
-  // 顯示鎖定訊息（讓使用者知道有這個功能、只是還沒開放）不太一樣。
-  const modules: { key: ModuleKey; label: string; icon: string }[] = [
-    { key: "inventory", label: "車輛庫存管理", icon: "📦" },
-    { key: "maintenance", label: "整備維修與會計請款", icon: "🛠️" },
-    { key: "crm", label: "CRM 客戶與賞車追蹤", icon: "👥" },
-    { key: "deals", label: "買賣合約與交易", icon: "📄" },
-    { key: "commission", label: "業務薪資", icon: "💰" },
-    ...(permissions.canViewCost
-      ? [{ key: "analytics" as ModuleKey, label: "車行經營數據看板", icon: "📊" }]
-      : []),
-    ...(permissions.canManageStaff
-      ? [{ key: "branding" as ModuleKey, label: "品牌設定", icon: "🎨" }]
-      : []),
-    ...(permissions.canManageStaff
-      ? [{ key: "settings" as ModuleKey, label: "帳號與權限管理", icon: "⚙️" }]
-      : []),
+  // 側邊欄（dashboard/layout.tsx 的 SidebarNav）用 <Link href="/dashboard?module=xxx">
+  // 深連結到指定分頁籤；初始值先看網址上的 module 參數，沒有（或不合法）
+  // 才退回車輛庫存管理。
+  const [active, setActiveState] = useState<ModuleKey>(() => parseModuleParam(moduleParam) ?? "inventory");
+
+  // 從側邊欄點另一個分頁籤連結時，Next.js 在同一個頁面元件實例上做
+  // client-side 導覽（不會整個重新 mount DashboardShell），只有上面的
+  // useState 初始值不會再被重新計算——所以另外用 useEffect 監聽網址上
+  // module 參數的變化，同步更新 active，不然畫面會停在原本的分頁籤上、
+  // 跟網址、側邊欄的選中樣式對不起來。
+  //
+  // 這裡原本寫成「只有 parsed 有值才更新」，導致從側邊欄點回「車輛庫存
+  // 管理」（連結是 /dashboard，網址上完全沒有 module 參數，parsed 會是
+  // null）時這個 if 直接跳過、active 卡在前一個分頁籤——這正是「點了
+  // 車輛庫存管理，畫面卻還停在整備維修」的原因。修法：不管 parsed 有沒有
+  // 值都要更新，沒有值就照 parseModuleParam 的規則退回 inventory。
+  useEffect(() => {
+    setActiveState(parseModuleParam(moduleParam) ?? "inventory");
+  }, [moduleParam]);
+
+  // 分頁籤的導覽本身已經整合進側邊欄（dashboard/layout.tsx 的
+  // SidebarNav，用 <Link href="/dashboard?module=xxx"> 深連結），這裡原本
+  // 還有一整排功能一模一樣的橫向分頁籤按鈕，兩套導覽各自獨立可以點、
+  // 又是分開的 React 狀態，正是「點了側邊欄的車輛庫存管理，畫面卻還停在
+  // 整備維修」這類同步 bug 的根源，使用者確認過只需要側邊欄，這裡直接
+  // 拿掉重複的那一套，只留下面「依 activeModule 決定顯示哪個模組內容」
+  // 的邏輯——這才是真正需要的部分，側邊欄的連結負責改網址、上面的
+  // useEffect 負責把網址同步回 activeModule。
+  //
+  // 待審核請款數量的提醒（原本顯示在這排分頁籤的「整備維修」按鈕上）
+  // 改到側邊欄對應項目上顯示，見 sidebar-nav.tsx 的 badge、
+  // dashboard/layout.tsx 查 pendingRepairCount 那段。
+  const modules: ModuleKey[] = [
+    "inventory",
+    "maintenance",
+    "crm",
+    // 估車申請跟 CRM 客戶名單同一個道理：本質上是業務跟進工作，不是需要
+    // 特別把關的管理功能，所有角色都看得到，不用 canManageStaff 擋。
+    "tradeIns",
+    "deals",
+    "commission",
+    ...(permissions.canViewCost ? (["analytics"] as ModuleKey[]) : []),
+    ...(permissions.canManageStaff ? (["branding", "settings"] as ModuleKey[]) : []),
+    // 「我的公開聯繫方式」是改自己的資料，不是管理功能，所有角色都看得到，
+    // 不用 canManageStaff 擋——見 my-contact-module.tsx 開頭的說明。
+    "myContact",
   ];
 
   // 如果目前選到的分頁因為權限變動（例如管理員把自己的權限搞丟，理論上
   // 不會發生，但保險起見）而不再存在於清單裡，就退回車輛庫存管理，
   // 避免畫面停留在一個已經不存在的分頁上。
-  const activeModule = modules.some((m) => m.key === active) ? active : "inventory";
+  const activeModule = modules.includes(active) ? active : "inventory";
 
   return (
     <div className="mt-6">
-      {/* 導覽列：韓系極簡暖灰底色，選中的模組用柔和奶茶金標示 */}
-      <nav className="flex flex-wrap gap-1.5 rounded-2xl border border-neutral-200 bg-[#F8F9FA] p-1.5 shadow-sm">
-        {modules.map((m) => (
-          <button
-            key={m.key}
-            type="button"
-            onClick={() => setActive(m.key)}
-            className={
-              "relative flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-sm font-medium transition " +
-              (activeModule === m.key
-                ? "bg-white text-[#A6793D] shadow-sm ring-1 ring-inset ring-[#E7DAC3]"
-                : "text-neutral-500 hover:bg-white/60 hover:text-neutral-800")
-            }
-          >
-            <span aria-hidden>{m.icon}</span>
-            {m.label}
-            {m.key === "maintenance" && pendingReviewCount > 0 && (
-              <span className="ml-0.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-[#B4813E] px-1 text-[10px] font-semibold text-white">
-                {pendingReviewCount}
-              </span>
-            )}
-          </button>
-        ))}
-      </nav>
-
-      <div className="mt-6">
         {activeModule === "inventory" && (
           <CarsManager
             cars={cars}
@@ -115,6 +156,7 @@ export function DashboardShell({
             role={role}
             permissions={permissions}
             tenantName={tenantName}
+            staff={staff}
           />
         )}
         {activeModule === "maintenance" && (
@@ -123,9 +165,11 @@ export function DashboardShell({
             cars={cars}
             role={role}
             receiptUrls={receiptUrls}
+            staff={staff}
           />
         )}
         {activeModule === "crm" && <CrmModule customers={customers} />}
+        {activeModule === "tradeIns" && <TradeInModule tradeInRequests={tradeInRequests} />}
         {activeModule === "deals" && (
           <DealsModule
             deals={deals}
@@ -150,12 +194,12 @@ export function DashboardShell({
           <AnalyticsModule cars={cars} repairItems={repairItems} deals={deals} staff={staff} />
         )}
         {activeModule === "branding" && permissions.canManageStaff && tenant && (
-          <BrandSettingsModule tenant={tenant} />
+          <BrandSettingsModule tenant={tenant} tenantVideos={tenantVideos} />
         )}
         {activeModule === "settings" && permissions.canManageStaff && (
           <SettingsModule staffAccounts={staffAccounts} currentUserId={currentUserId} />
         )}
-      </div>
+        {activeModule === "myContact" && <MyContactModule myContact={myContact} />}
     </div>
   );
 }

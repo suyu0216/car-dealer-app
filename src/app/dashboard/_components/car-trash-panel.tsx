@@ -2,6 +2,7 @@
 
 import { useTransition } from "react";
 import type { Car } from "@/lib/supabase/types";
+import { formatDateTime } from "@/lib/format";
 import { restoreCar } from "../cars-actions";
 
 /** 「已刪除」清單：軟刪除的車輛在這裡復原，見 cars-actions.ts 的 deleteCar()/
@@ -49,7 +50,7 @@ export function CarTrashPanel({
                   {car.model_name}
                 </p>
                 <p className="text-xs text-neutral-400">
-                  刪除時間：{car.deleted_at ? new Date(car.deleted_at).toLocaleString("zh-TW") : "—"}
+                  刪除時間：{formatDateTime(car.deleted_at)}
                 </p>
               </div>
               {canEditCars && (

@@ -3,6 +3,7 @@
 import { useActionState, useEffect, useState } from "react";
 import { createDeal, updateDeal, type DealFormState } from "../deals-actions";
 import { useUnsavedChangesGuard } from "./use-unsaved-changes-guard";
+import { CASH_POOL_METHOD_OPTIONS } from "@/lib/cash-pool";
 import type { Car, Customer, Deal, DealStatus } from "@/lib/supabase/types";
 
 const STATUS_OPTIONS: { value: DealStatus; label: string }[] = [
@@ -149,6 +150,21 @@ export function DealFormModal({
               type="number"
               defaultValue={deal?.balance_amount != null ? String(deal.balance_amount) : ""}
             />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-neutral-700">收款方式（訂金＋尾款）</label>
+            <select name="payment_method" defaultValue={deal?.payment_method ?? ""} className={INPUT_CLASS}>
+              <option value="">尚未收款／不指定</option>
+              {CASH_POOL_METHOD_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 text-xs text-neutral-400">
+              給後台「資金總覽」水池分類用——客人這筆錢是付現金還是匯款進來。
+            </p>
           </div>
 
           <div className="grid grid-cols-2 gap-3">

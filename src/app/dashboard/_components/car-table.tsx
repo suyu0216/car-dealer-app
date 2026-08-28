@@ -4,12 +4,14 @@ import type { Car } from "@/lib/supabase/types";
 import { formatCurrency } from "@/lib/format";
 import { CarStatusBadge } from "./car-status-badge";
 import { CarAgingBadge } from "./car-aging-badge";
+import { CarTitleBadge } from "./car-title-badge";
 import { CarQuickActions } from "./car-quick-actions";
 
 export function CarTable({
   cars,
   canViewCost,
   canEditCars,
+  repairCostByCar,
   onView,
   onEdit,
 }: {
@@ -18,6 +20,10 @@ export function CarTable({
   canViewCost: boolean;
   /** 沒有這個權限就不顯示「編輯」按鈕（可以看、不能改）。 */
   canEditCars: boolean;
+  /** 每輛車已核准撥款的整備維修費用加總，見 cars-manager.tsx 的
+   * computeApprovedPrepCostByCar()——庫存列表直接看得到每台車花了多少
+   * 整備費，不用點進詳情頁才知道。 */
+  repairCostByCar: Map<string, number>;
   onView: (car: Car) => void;
   onEdit: (car: Car) => void;
 }) {
@@ -32,6 +38,7 @@ export function CarTable({
             <th className="px-4 py-2 font-medium">車牌號碼</th>
             <th className="px-4 py-2 font-medium">車輛狀態</th>
             <th className="px-4 py-2 font-medium">收購進價</th>
+            <th className="px-4 py-2 font-medium">整備費（已核准）</th>
             <th className="px-4 py-2 font-medium">開價/底價</th>
             <th className="px-4 py-2 font-medium" />
           </tr>
@@ -39,7 +46,7 @@ export function CarTable({
         <tbody className="divide-y divide-neutral-100">
           {cars.length === 0 && (
             <tr>
-              <td colSpan={8} className="px-4 py-8 text-center text-neutral-400">
+              <td colSpan={9} className="px-4 py-8 text-center text-neutral-400">
                 沒有符合篩選條件的車輛
               </td>
             </tr>
@@ -62,11 +69,25 @@ export function CarTable({
               <td className="px-4 py-2">
                 <div className="flex flex-wrap items-center gap-1.5">
                   <CarStatusBadge status={car.status} />
+                  {car.is_featured && (
+                    <span className="rounded-full bg-[#F5EEE0] px-2 py-0.5 text-[11px] font-medium text-[#A6793D]">
+                      ⭐ 熱門推薦
+                    </span>
+                  )}
+                  {car.body_type && (
+                    <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-[11px] text-neutral-500">
+                      {car.body_type}
+                    </span>
+                  )}
                   <CarAgingBadge car={car} />
+                  <CarTitleBadge car={car} canViewCost={canViewCost} />
                 </div>
               </td>
               <td className="px-4 py-2 text-neutral-600">
                 {canViewCost ? formatCurrency(car.purchase_price) : "🔒"}
+              </td>
+              <td className="px-4 py-2 text-neutral-600">
+                {canViewCost ? formatCurrency(repairCostByCar.get(car.id) ?? 0) : "🔒"}
               </td>
               <td className="px-4 py-2 text-neutral-600">
                 {car.selling_price != null ? formatCurrency(car.selling_price) : "—"}

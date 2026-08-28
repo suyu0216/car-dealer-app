@@ -7,12 +7,16 @@ export function CarGallery({
   cars,
   canViewCost,
   canEditCars,
+  repairCostByCar,
   onView,
   onEdit,
 }: {
   cars: Car[];
   canViewCost: boolean;
   canEditCars: boolean;
+  /** 每輛車已核准撥款的整備維修費用加總，見 cars-manager.tsx 的
+   * computeApprovedPrepCostByCar()。 */
+  repairCostByCar: Map<string, number>;
   onView: (car: Car) => void;
   onEdit: (car: Car) => void;
 }) {
@@ -32,6 +36,7 @@ export function CarGallery({
           car={car}
           canViewCost={canViewCost}
           canEditCars={canEditCars}
+          repairCost={repairCostByCar.get(car.id) ?? 0}
           onView={onView}
           onEdit={onEdit}
         />

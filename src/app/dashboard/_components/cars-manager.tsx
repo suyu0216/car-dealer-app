@@ -17,13 +17,40 @@ type ModalState =
   | { mode: "view"; car: Car }
   | null;
 
+/**
+ * 每輛車「已核准撥款」的整備維修費用加總——跟車輛詳情頁「維修請款與
+ * 會計」分頁（car-maintenance-tab.tsx）、車行經營數據看板（cars-kpi.tsx）
+ * 用的是同一套公式，維修/整備費用一律以 repair_items 這張請款紀錄表為
+ * 唯一真實來源，不再讀車輛表單裡那個已經棄用、沒人在同步的
+ * repair_cost 手動欄位（見 car-form-modal.tsx 拿掉那個欄位的說明）。
+ * 待審核中的項目不計入，避免還沒核准撥款的金額被當成「已經花掉的錢」。
+ */
+function computeApprovedPrepCostByCar(repairItems: RepairItem[]) {
+  const map = new Map<string, number>();
+  for (const item of repairItems) {
+    if (item.status !== "approved") continue;
+    map.set(item.car_id, (map.get(item.car_id) ?? 0) + Number(item.amount));
+  }
+  return map;
+}
+
 function matchesKeyword(car: Car, keyword: string) {
-  if (!keyword.trim()) return true;
+  const trimmed = keyword.trim().toLowerCase();
+  if (!trimmed) return true;
+
   const haystack = [car.model_name, car.license_plate, car.vin, car.brand]
     .filter(Boolean)
     .join(" ")
     .toLowerCase();
-  return haystack.includes(keyword.trim().toLowerCase());
+  if (haystack.includes(trimmed)) return true;
+
+  // 車牌／VIN 常見打法落差——存的可能是「ABC-1234」，但使用者直接打
+  // 「ABC1234」（沒加「-」）就完全比對不到，反過來也一樣。這裡額外拿掉
+  // 空格跟「-」再比對一次，兩種打法都找得到，不會因為多打/少打一個
+  // 分隔符號就搜不到明明存在的車。
+  const normalizedHaystack = haystack.replace(/[\s-]/g, "");
+  const normalizedKeyword = trimmed.replace(/[\s-]/g, "");
+  return normalizedKeyword.length > 0 && normalizedHaystack.includes(normalizedKeyword);
 }
 
 export function CarsManager({
@@ -33,6 +60,7 @@ export function CarsManager({
   role,
   permissions,
   tenantName,
+  staff,
 }: {
   cars: Car[];
   repairItems: RepairItem[];
@@ -40,6 +68,9 @@ export function CarsManager({
   role: Role;
   permissions: EffectivePermissions;
   tenantName?: string;
+  /** 給「上架人」顯示（car-detail-modal.tsx）跟「墊款業務/經手人」下拉選單
+   * （car-maintenance-tab.tsx）用，同一份員工清單全車行共用。 */
+  staff: { id: string; name: string | null }[];
 }) {
   const [view, setView] = useState<"table" | "gallery">("gallery");
   const [showTrash, setShowTrash] = useState(false);
@@ -81,6 +112,8 @@ export function CarsManager({
   const [filters, setFilters] = useState<CarFilters>(() =>
     defaultCarFilters(priceBounds.min, priceBounds.max)
   );
+
+  const repairCostByCar = useMemo(() => computeApprovedPrepCostByCar(repairItems), [repairItems]);
 
   const filteredCars = activeCars.filter((car) => {
     if (!matchesKeyword(car, filters.keyword)) return false;
@@ -184,6 +217,7 @@ export function CarsManager({
                 cars={filteredCars}
                 canViewCost={permissions.canViewCost}
                 canEditCars={permissions.canEditCars}
+                repairCostByCar={repairCostByCar}
                 onView={(car) => setModalState({ mode: "view", car })}
                 onEdit={(car) => setModalState({ mode: "edit", car })}
               />
@@ -192,6 +226,7 @@ export function CarsManager({
                 cars={filteredCars}
                 canViewCost={permissions.canViewCost}
                 canEditCars={permissions.canEditCars}
+                repairCostByCar={repairCostByCar}
                 onView={(car) => setModalState({ mode: "view", car })}
                 onEdit={(car) => setModalState({ mode: "edit", car })}
               />
@@ -209,6 +244,7 @@ export function CarsManager({
           tenantName={tenantName}
           repairItems={repairItems.filter((r) => r.car_id === modalState.car.id)}
           receiptUrls={receiptUrls}
+          staff={staff}
           onClose={() => setModalState(null)}
           onEdit={() => setModalState({ mode: "edit", car: modalState.car })}
         />
@@ -219,6 +255,7 @@ export function CarsManager({
           mode={modalState.mode}
           car={modalState.mode === "edit" ? modalState.car : undefined}
           canViewCost={permissions.canViewCost}
+          staff={staff}
           onClose={closeFormModal}
         />
       )}

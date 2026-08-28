@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import type { Car, RepairItem, Role } from "@/lib/supabase/types";
-import { formatCurrency, formatNumber } from "@/lib/format";
+import type { Car, RepairItem, RepairItemCategory, Role } from "@/lib/supabase/types";
+import { formatCurrency, formatDate, formatNumber } from "@/lib/format";
 import { CarStatusBadge, STATUS_LABEL, STATUS_OPTIONS } from "./car-status-badge";
 import { CarAgingBadge } from "./car-aging-badge";
 import { CarMaintenanceTab } from "./car-maintenance-tab";
@@ -24,6 +24,7 @@ export function CarDetailModal({
   tenantName,
   repairItems,
   receiptUrls,
+  staff,
   onClose,
   onEdit,
 }: {
@@ -35,6 +36,9 @@ export function CarDetailModal({
   tenantName?: string;
   repairItems: RepairItem[];
   receiptUrls: Record<string, string>;
+  /** 給「上架人」顯示、跟傳給「維修請款與會計」分頁的「墊款業務/經手人」
+   * 下拉選單用。 */
+  staff: { id: string; name: string | null }[];
   onClose: () => void;
   onEdit: () => void;
 }) {
@@ -44,8 +48,85 @@ export function CarDetailModal({
     .split(/[,，]/)
     .map((t) => t.trim())
     .filter(Boolean);
+  // 上架人／採購業務：對照員工清單把 profiles.id 換成名字顯示；找不到
+  // （例如那位同仁已經被移出車行）就顯示「（帳號已移除）」。上架人是新增
+  // 當下自動寫入、不能改；採購業務是「進貨付款追蹤」表單裡可以隨時編輯
+  // 的欄位，兩者是不同的人也很正常（例如業務跑去收購、行政人員幫忙上架）。
+  const createdByName = car.created_by
+    ? (staff.find((s) => s.id === car.created_by)?.name ?? "（帳號已移除）")
+    : null;
+  const purchasedByName = car.purchased_by
+    ? (staff.find((s) => s.id === car.purchased_by)?.name ?? "（帳號已移除）")
+    : null;
+
+  // 整備維修成本／整理美容成本一律用「維修請款與會計」分頁裡已核准撥款
+  // 的請款紀錄依類別即時加總，不再讀車輛表單那兩個已經棄用、沒人同步的
+  // repair_cost / detailing_cost 手動欄位——選哪台車、選哪個類別送出
+  // 請款，這裡的數字就會自動跟著變，不用兩邊分別維護、也不會兜不起來。
+  // 待審核中的金額另外顯示總和、不計入這兩個數字，跟
+  // car-maintenance-tab.tsx／cars-kpi.tsx 的「已核准才算」邏輯一致。
+  const approvedByCategory = (category: RepairItemCategory) =>
+    repairItems
+      .filter((r) => r.status === "approved" && r.category === category)
+      .reduce((sum, r) => sum + Number(r.amount), 0);
+  const approvedRepairCost = approvedByCategory("維修");
+  const approvedDetailingCost = approvedByCategory("美容");
+  const approvedOtherCost = approvedByCategory("其他");
+  const pendingRepairCost = repairItems
+    .filter((r) => r.status === "pending")
+    .reduce((sum, r) => sum + Number(r.amount), 0);
+  // 車輛總成本：收購進價 + 過戶費/規費 + 稅金/發票稅金 + 已核准的整備
+  // 維修/美容/其他開銷全部加起來——原本只有「維修請款與會計」分頁的
+  // 財務損益卡（car-maintenance-tab.tsx 的 VehiclePnlCard）算過這個總數，
+  // 「車輛資訊」分頁（也就是一打開車輛詳情頁預設看到的畫面）只列出各項
+  // 分開的數字、沒有加總，要花多少錢一目瞭然還得切到另一個分頁才看得到
+  // 總數。這裡直接在「成本結構」區塊最上面加一個總計，開起來就看得到，
+  // 不用切分頁。
+  // closed_commission_cost：這輛車結帳（售出）當下封存的業務抽成快照，
+  // 只有已經售出的車輛才會有值，見 cars-actions.ts computeClosingFields()
+  // 的說明。直接讀車輛本身的欄位，不需要另外把 deals 資料傳進這個
+  // 元件——結完帳的數字本來就不會再變動，讀快照即可。
+  const totalSpent =
+    Number(car.purchase_price) +
+    Number(car.transfer_fee ?? 0) +
+    Number(car.tax_amount ?? 0) +
+    Number(car.closed_commission_cost ?? 0) +
+    approvedRepairCost +
+    approvedDetailingCost +
+    approvedOtherCost;
 
   function handleQuickStatus(status: Car["status"]) {
+    // 「設為已售出」原本只改狀態，完全不會問成交價，導致「定價」區塊的
+    // 「最終成交價」永遠是空的——除非另外開「編輯車輛」手動填，或整個
+    // 走「買賣合約與交易」建立合約走到交車。這裡順便問一次，一次到位。
+    // 按「取消」或留空不阻擋狀態變更本身，維持原本快捷操作的行為，之後
+    // 仍可以在「編輯車輛」裡補填，或事後回來走合約流程覆蓋。
+    if (status === "sold") {
+      const suggested = car.final_price ?? car.selling_price ?? null;
+      const input = window.prompt(
+        "請輸入這輛車的最終成交價（新台幣），填了會自動帶入「最終成交價」欄位，車行經營數據看板的已實現毛利也會用這個數字計算。\n\n不確定金額可以先留空或取消，之後再到「編輯車輛」補填。",
+        suggested != null ? String(suggested) : ""
+      );
+      if (input === null) {
+        startTransition(() => {
+          updateCarStatus(car.id, status);
+        });
+        return;
+      }
+      const trimmed = input.trim();
+      if (trimmed !== "") {
+        const parsed = Number(trimmed);
+        if (!Number.isFinite(parsed) || parsed < 0) {
+          window.alert("金額格式不正確，請輸入數字。");
+          return;
+        }
+        startTransition(() => {
+          updateCarStatus(car.id, status, parsed);
+        });
+        return;
+      }
+    }
+
     startTransition(() => {
       updateCarStatus(car.id, status);
     });
@@ -139,6 +220,7 @@ export function CarDetailModal({
               role={role}
               canViewCost={canViewCost}
               receiptUrls={receiptUrls}
+              staff={staff}
             />
           </div>
         ) : (
@@ -179,6 +261,9 @@ export function CarDetailModal({
               <Spec label="車身顏色" value={car.color} />
               <Spec label="車牌號碼" value={car.license_plate} />
               <Spec label="VIN 車身號碼" value={car.vin} />
+              <Spec label="上架人" value={createdByName} />
+              <Spec label="上架日期" value={formatDate(car.created_at)} />
+              <Spec label="採購業務" value={purchasedByName} />
             </SpecGrid>
           </Section>
 
@@ -206,19 +291,59 @@ export function CarDetailModal({
             )}
           </Section>
 
-          {/* 財務與成本結構：展示開價每個人都要看得到（要跟客戶報價），
-              其餘收購成本/規費/整備/底價/最終成交價都是敏感財務資訊，
-              沒有 canViewCost 權限就整格遮罩。 */}
-          <Section title="財務與成本結構">
+          {/* 定價：展示開價/預計底價/最終成交價都是「賣多少錢」的價格
+              數字，統一放在同一區塊——展示開價每個人都要看得到（要跟
+              客戶報價），預計底價/最終成交價是敏感財務資訊，沒有
+              canViewCost 權限就遮罩，邏輯跟原本一樣，只是跟下面「成本」
+              （花了多少錢）分開，不要混在同一個區塊裡。 */}
+          <Section title="定價">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+              <Money label="展示開價" value={car.selling_price} highlight />
+              <Money label="預計底價" value={car.floor_price} mask={!canViewCost} />
+              <Money label="最終成交價" value={car.final_price} mask={!canViewCost} highlight />
+            </div>
+          </Section>
+
+          {/* 成本：純粹是「花了多少錢」的支出數字，敏感財務資訊，沒有
+              canViewCost 權限就整格遮罩。整備維修成本／整理美容成本改讀
+              請款紀錄依類別即時加總（見上面 approvedByCategory 的說明），
+              不是手動填的數字。 */}
+          <Section title="成本結構">
+            {canViewCost ? (
+              <div className="mb-3 rounded-xl bg-[#BFA074]/10 p-3">
+                <p className="text-[11px] text-neutral-500">
+                  車輛總成本（收購進價 + 過戶費/規費 + 稅金 + 業務抽成 + 已核准整備維修/美容/其他）
+                </p>
+                <p className="mt-0.5 text-xl font-bold tabular-nums text-[#A6793D]">
+                  {formatCurrency(totalSpent)}
+                </p>
+              </div>
+            ) : (
+              <div className="mb-3 rounded-xl bg-[#F8F9FA] p-3 text-center text-sm text-neutral-400">
+                🔒 車輛總成本屬於敏感財務資訊，沒有檢視權限
+              </div>
+            )}
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
               <Money label="收購進價" value={car.purchase_price} mask={!canViewCost} />
               <Money label="過戶費/規費" value={car.transfer_fee} mask={!canViewCost} />
-              <Money label="整理美容成本" value={car.detailing_cost} mask={!canViewCost} />
-              <Money label="整備維修成本" value={car.repair_cost} mask={!canViewCost} />
-              <Money label="預計底價" value={car.floor_price} mask={!canViewCost} />
-              <Money label="展示開價" value={car.selling_price} highlight />
-              <Money label="最終成交價" value={car.final_price} mask={!canViewCost} highlight />
+              <Money label="稅金/發票稅金" value={car.tax_amount} mask={!canViewCost} />
+              {car.closed_commission_cost != null && (
+                <Money label="業務抽成（結帳封存）" value={car.closed_commission_cost} mask={!canViewCost} />
+              )}
+              <Money label="整備維修成本（已核准）" value={approvedRepairCost} mask={!canViewCost} />
+              <Money label="整理美容成本（已核准）" value={approvedDetailingCost} mask={!canViewCost} />
+              {approvedOtherCost > 0 && (
+                <Money label="其他開銷（已核准）" value={approvedOtherCost} mask={!canViewCost} />
+              )}
             </div>
+            {canViewCost && (
+              <p className="mt-2 text-xs text-neutral-400">
+                {pendingRepairCost > 0
+                  ? `另有待審核的請款共 ${formatCurrency(pendingRepairCost)}（不分類別），核准後才會計入上面的數字。`
+                  : "以上依類別的成本會依「維修請款與會計」分頁裡已核准撥款的紀錄自動加總。"}
+                點上方「維修請款與會計」分頁可以看到每一筆項目明細。
+              </p>
+            )}
           </Section>
 
           {/* 操作列 */}

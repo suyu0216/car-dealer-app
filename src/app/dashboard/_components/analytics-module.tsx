@@ -1,14 +1,19 @@
 import type { Car, Deal, RepairItem } from "@/lib/supabase/types";
-import { formatCurrency } from "@/lib/format";
+import { formatCurrency, formatNumber, taiwanDateParts } from "@/lib/format";
 
 function daysBetween(a: Date, b: Date) {
   return Math.round((b.getTime() - a.getTime()) / (1000 * 60 * 60 * 24));
 }
 
+// 「本月/今年」一律用台灣時間判斷，不是程式碼實際執行環境（伺服器/瀏覽器）
+// 的系統時區——見 src/lib/format.ts 的 taiwanDateParts() 說明。
 function isThisMonth(iso: string, now: Date) {
-  const d = new Date(iso);
-  return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+  const a = taiwanDateParts(iso);
+  const b = taiwanDateParts(now);
+  return a.year === b.year && a.month === b.month;
 }
+
+const MONTH_LABELS = ["1月", "2月", "3月", "4月", "5月", "6月", "7月", "8月", "9月", "10月", "11月", "12月"];
 
 export function AnalyticsModule({
   cars,
@@ -94,6 +99,29 @@ export function AnalyticsModule({
     .sort((a, b) => b.total - a.total)
     .slice(0, 5);
 
+  // ---------------------------------------------------------------------
+  // 卡片三：年度整備／維修開銷 —— 只算「已核准撥款」的維修請款
+  // （repair_items.status === 'approved'，待審核/已退回不算真的花出去的
+  // 錢），依審核通過日期（reviewed_at；缺這個時間戳的舊資料退回用
+  // created_at，避免整筆從圖表消失）分月加總，看得出每個月維修支出的
+  // 趨勢，不只是單月數字。
+  // ---------------------------------------------------------------------
+  const currentYear = taiwanDateParts(now).year;
+  // taiwanDateParts().month 是 1-12（不是 JS Date 慣用的 0-based），這裡
+  // 減 1 換成陣列 index，跟下面 monthlyRepairCost[月 - 1] 是同一套換算。
+  const currentMonthIndex = taiwanDateParts(now).month - 1;
+  const approvedThisYear = repairItems.filter((r) => {
+    if (r.status !== "approved") return false;
+    return taiwanDateParts(r.reviewed_at ?? r.created_at).year === currentYear;
+  });
+  const monthlyRepairCost = Array.from({ length: 12 }, () => 0);
+  for (const item of approvedThisYear) {
+    const month = taiwanDateParts(item.reviewed_at ?? item.created_at).month;
+    monthlyRepairCost[month - 1] += Number(item.amount);
+  }
+  const yearlyRepairTotal = monthlyRepairCost.reduce((sum, v) => sum + v, 0);
+  const maxMonthlyRepairCost = Math.max(1, ...monthlyRepairCost);
+
   return (
     <section className="space-y-5">
       <h2 className="text-base font-semibold text-neutral-800">車行經營數據看板</h2>
@@ -168,6 +196,42 @@ export function AnalyticsModule({
             </ol>
           )}
         </div>
+      </div>
+
+      {/* 🛠️ 年度整備／維修開銷 */}
+      <div className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
+        <div className="flex items-center gap-2">
+          <span aria-hidden>🛠️</span>
+          <h3 className="text-sm font-semibold text-neutral-800">{currentYear} 年度整備／維修開銷</h3>
+        </div>
+        <p className="mt-0.5 text-xs text-neutral-400">
+          僅統計已核准撥款的維修請款，依審核通過月份分月加總
+        </p>
+
+        <div className="mt-4">
+          <Stat label={`${currentYear} 年累計已撥款`} value={formatCurrency(yearlyRepairTotal)} />
+        </div>
+
+        {yearlyRepairTotal === 0 ? (
+          <p className="mt-4 text-sm text-neutral-400">今年還沒有已核准撥款的維修請款紀錄</p>
+        ) : (
+          <div className="mt-4 flex items-end gap-1.5 sm:gap-2">
+            {monthlyRepairCost.map((amount, i) => (
+              <div key={i} className="flex flex-1 flex-col items-center gap-1">
+                <span className="text-[10px] tabular-nums text-neutral-400">
+                  {amount > 0 ? formatNumber(Math.round(amount / 1000)) + "k" : ""}
+                </span>
+                <div
+                  className={
+                    "w-full rounded-t-md " + (i === currentMonthIndex ? "bg-[#BFA074]" : "bg-[#E7DAC3]")
+                  }
+                  style={{ height: `${Math.max(4, (amount / maxMonthlyRepairCost) * 96)}px` }}
+                />
+                <span className="text-[10px] text-neutral-400">{MONTH_LABELS[i]}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </section>
   );
