@@ -4,7 +4,14 @@ import { revalidatePath } from "next/cache";
 import { requireTenantUser } from "@/lib/supabase/dal";
 import { createClient } from "@/lib/supabase/server";
 import { uploadReceiptFile } from "@/lib/supabase/storage";
-import type { RepairItemStatus } from "@/lib/supabase/types";
+import { createNotification } from "@/lib/supabase/notifications";
+import { formatCurrency } from "@/lib/format";
+// 類別清單改從這個普通模組匯入，不能自己在這個 "use server" 檔案裡
+// export const 陣列——那樣 Client Component import 進去會壞掉（陣列會
+// 變成一個 Server Action 參照，不是真的陣列），見
+// src/lib/repair-item-constants.ts 開頭的說明。
+import { REPAIR_ITEM_CATEGORIES } from "@/lib/repair-item-constants";
+import type { RepairItemCategory, RepairItemStatus } from "@/lib/supabase/types";
 
 export interface RepairItemFormState {
   error?: string;
@@ -29,6 +36,9 @@ export async function createRepairItem(
   const handlerName = String(formData.get("handler_name") ?? "").trim();
   const receiptNumber = String(formData.get("receipt_number") ?? "").trim();
   const amountRaw = String(formData.get("amount") ?? "").trim();
+  // 沒選類別（例如舊版前端快取還沒更新）就預設「維修」，跟資料庫欄位的
+  // 預設值一致，不會擋住送出。
+  const categoryRaw = String(formData.get("category") ?? "維修").trim();
 
   if (!carId) {
     return { error: "缺少車輛 ID，無法送出請款。" };
@@ -40,6 +50,10 @@ export async function createRepairItem(
   if (amountRaw === "" || !Number.isFinite(amount) || amount < 0) {
     return { error: "請輸入正確的請款金額。" };
   }
+  if (!REPAIR_ITEM_CATEGORIES.includes(categoryRaw as RepairItemCategory)) {
+    return { error: "請選擇正確的請款類別。" };
+  }
+  const category = categoryRaw as RepairItemCategory;
 
   const supabase = await createClient();
 
@@ -68,21 +82,41 @@ export async function createRepairItem(
     }
   }
 
-  const { error } = await supabase.from("repair_items").insert({
-    tenant_id: profile.tenant_id!,
-    car_id: carId,
-    item_name: itemName,
-    vendor_name: vendorName || null,
-    handler_name: handlerName || null,
-    amount,
-    receipt_number: receiptNumber || null,
-    evidence_path: evidencePath,
-    status: "pending",
-  });
+  // select("id") 拿回剛新增那筆的 id，讓下面的通知可以帶上「傳送門」連結
+  // 直接指到這一筆，不是只導去整備維修分頁讓人自己找。
+  const { data: inserted, error } = await supabase
+    .from("repair_items")
+    .insert({
+      tenant_id: profile.tenant_id!,
+      car_id: carId,
+      item_name: itemName,
+      vendor_name: vendorName || null,
+      handler_name: handlerName || null,
+      amount,
+      receipt_number: receiptNumber || null,
+      evidence_path: evidencePath,
+      status: "pending",
+      category,
+    })
+    .select("id")
+    .single();
 
-  if (error) {
-    return { error: `送出維修請款失敗：${error.message}` };
+  if (error || !inserted) {
+    return { error: `送出維修請款失敗：${error?.message ?? "未知錯誤"}` };
   }
+
+  // 通知車行管理員有新的請款待審核——鈴鐺通知，讓管理員不用一直手動
+  // 進「整備維修」分頁才知道有新的東西要處理。link 帶上 highlight=該筆 id，
+  // 讓管理員點通知就直接跳到、並反白這一筆，不用在列表裡自己找。寫入
+  // 失敗只記錄錯誤，見 createNotification() 的說明。
+  await createNotification({
+    tenantId: profile.tenant_id!,
+    type: "repair_item_pending",
+    title: "新的維修請款待審核",
+    message: `${profile.name ?? "有人"} 提交了一筆「${itemName}」（${category}）請款，金額 ${formatCurrency(amount)}`,
+    actorName: profile.name,
+    link: `?module=maintenance&highlight=${inserted.id}`,
+  });
 
   revalidatePath("/dashboard");
   return { success: true };

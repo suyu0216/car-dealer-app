@@ -4,7 +4,8 @@ import { revalidatePath } from "next/cache";
 import { requireTenantUser } from "@/lib/supabase/dal";
 import { createClient } from "@/lib/supabase/server";
 import { getEffectivePermissions } from "@/lib/permissions";
-import type { DealStatus } from "@/lib/supabase/types";
+import { syncCarStatusFromDeal } from "./cars-actions";
+import type { CashPoolMethod, DealStatus } from "@/lib/supabase/types";
 
 export interface DealFormState {
   error?: string;
@@ -12,6 +13,7 @@ export interface DealFormState {
 }
 
 const VALID_STATUSES: DealStatus[] = ["draft", "signed", "delivered"];
+const VALID_PAYMENT_METHODS: CashPoolMethod[] = ["cash", "bank"];
 
 function optionalText(formData: FormData, name: string): string | null {
   const value = String(formData.get(name) ?? "").trim();
@@ -50,6 +52,13 @@ function parseDealForm(formData: FormData, canSetCommission: boolean) {
 
   const customerId = optionalText(formData, "customer_id");
 
+  // 收款方式：給「資金總覽」水池用，分類這筆訂金＋尾款要算進現金池還是
+  // 銀行池。草約階段可能還沒收到錢，允許不選（undefined 值 → null）。
+  const paymentMethodRaw = optionalText(formData, "payment_method");
+  if (paymentMethodRaw && !VALID_PAYMENT_METHODS.includes(paymentMethodRaw as CashPoolMethod)) {
+    throw new Error("收款方式不正確。");
+  }
+
   return {
     car_id: carId,
     customer_id: customerId,
@@ -58,6 +67,7 @@ function parseDealForm(formData: FormData, canSetCommission: boolean) {
     final_price: finalPrice,
     deposit_amount: optionalMoney(formData, "deposit_amount", "訂金"),
     balance_amount: optionalMoney(formData, "balance_amount", "尾款"),
+    payment_method: (paymentMethodRaw as CashPoolMethod | null) ?? null,
     loan_status: optionalText(formData, "loan_status"),
     salesperson_id: optionalText(formData, "salesperson_id"),
     ...(canSetCommission
@@ -90,6 +100,10 @@ export async function createDeal(
     return { error: `新增合約失敗：${error.message}` };
   }
 
+  // 合約一新增就同步車輛狀態（簽約→保留／交車→售出＋帶入成交價），見
+  // cars-actions.ts 的 syncCarStatusFromDeal() 說明。
+  await syncCarStatusFromDeal(values.car_id, values.status, values.final_price);
+
   revalidatePath("/dashboard");
   return { success: true };
 }
@@ -118,6 +132,12 @@ export async function updateDeal(
   if (error) {
     return { error: `更新合約失敗：${error.message}` };
   }
+
+  // 合約狀態改動也要同步一次——例如原本是草約，編輯時才改成已簽約/已
+  // 交車，車輛狀態要跟著推進，不能只有新增合約當下才會同步；如果合約
+  // 已經是已交車、這次編輯只是訂正成交金額，也會把訂正後的價格重新
+  // 同步到車輛的最終成交價（見 syncCarStatusFromDeal 說明）。
+  await syncCarStatusFromDeal(values.car_id, values.status, values.final_price);
 
   revalidatePath("/dashboard");
   return { success: true };

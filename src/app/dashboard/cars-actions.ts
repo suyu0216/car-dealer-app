@@ -5,7 +5,8 @@ import { requireTenantUser } from "@/lib/supabase/dal";
 import { createClient } from "@/lib/supabase/server";
 import { uploadCarPhoto } from "@/lib/supabase/storage";
 import { getEffectivePermissions } from "@/lib/permissions";
-import type { CarStatus, PaymentMethod, TransferStatus } from "@/lib/supabase/types";
+import { VALID_BODY_TYPES } from "@/lib/supabase/types";
+import type { CarStatus, DealStatus, PaymentMethod, TransferStatus } from "@/lib/supabase/types";
 
 export interface CarFormState {
   error?: string;
@@ -43,6 +44,7 @@ interface ParsedCar {
   condition_notes: string | null;
   purchase_price: number;
   transfer_fee: number | null;
+  tax_amount: number | null;
   detailing_cost: number | null;
   repair_cost: number | null;
   floor_price: number | null;
@@ -52,6 +54,9 @@ interface ParsedCar {
   paid_amount: number | null;
   payment_method: PaymentMethod | null;
   payment_note: string | null;
+  /** 採購業務：跟 created_by（新增當下寫入一次、不能改）不一樣，這個
+   * 欄位可以隨編輯車輛隨時修改，見 types.ts 對 Car.purchased_by 的說明。 */
+  purchased_by: string | null;
   // 行政過戶與第三方認證
   transfer_date: string | null;
   transfer_status: TransferStatus | null;
@@ -68,11 +73,15 @@ interface ParsedCar {
   // 前台展示開關
   is_public: boolean;
   status: CarStatus;
+  // 車型分類／熱門推薦——見 types.ts 對 Car.body_type / is_featured 的說明。
+  body_type: (typeof VALID_BODY_TYPES)[number] | null;
+  is_featured: boolean;
 }
 
 interface ClosingFields {
   closed_at?: string | null;
   closed_prep_cost?: number | null;
+  closed_commission_cost?: number | null;
   closed_total_cost?: number | null;
 }
 
@@ -118,12 +127,22 @@ function computeNomineeFields(
 
 /**
  * 會計結帳邏輯核心：只有在「這次要把狀態改成 sold、而且之前不是 sold」
- * 的那一刻，才把當下已核准的維修整備費加總、連同收購價/規費封存成
- * closed_prep_cost / closed_total_cost，並記錄 closed_at。
+ * 的那一刻，才把當下已核准的維修整備費、對應合約的業務抽成加總，連同
+ * 收購價/規費/稅金封存成 closed_prep_cost / closed_commission_cost /
+ * closed_total_cost，並記錄 closed_at。
  *
- * 之後不管 repair_items 又核准了多少新項目，這輛車的已結帳數字都不會
- * 再變動 —— 車行經營數據看板統計「已實現毛利」時一律讀這三個欄位，
- * 不會重新加總 repair_items（見 analytics-module.tsx）。
+ * 業務抽成的來源：查這輛車底下狀態是「已交車」的合約（deals），取最新
+ * 一筆的 commission_amount——正常情況一輛車只會有一筆已交車的合約，
+ * 這裡容錯用「取最新」處理極少數重複建約的邊界情況。沒有對應合約，或
+ * 合約沒填抽成，就當作 0。這樣不管是從「買賣合約」交車自動觸發
+ * （syncCarStatusFromDeal），還是車輛詳情頁「設為已售出」快捷操作手動
+ * 觸發，只要資料庫裡已經有這筆合約，抽成都會被正確封存進去，不用另外
+ * 從呼叫端把抽成金額當參數一路傳進來。
+ *
+ * 之後不管 repair_items 又核准了多少新項目、合約抽成事後又被改了多少，
+ * 這輛車的已結帳數字都不會再變動 —— 車行經營數據看板統計「已實現毛利」
+ * 時一律讀這幾個欄位，不會重新加總 repair_items／deals（見
+ * analytics-module.tsx）。
  *
  * 如果狀態從 sold 改回其他狀態（例如登記錯誤要更正），封存欄位會被清空，
  * 這輛車重新回到「用即時資料計算」的在庫車輛邏輯；下次再變成 sold 時，
@@ -139,29 +158,40 @@ async function computeClosingFields(
   previousStatus: CarStatus | null,
   newStatus: CarStatus,
   purchasePrice: number,
-  transferFee: number | null
+  transferFee: number | null,
+  taxAmount: number | null
 ): Promise<ClosingFields> {
   const wasSold = previousStatus === "sold";
 
   if (newStatus === "sold" && !wasSold) {
     let prepCost = 0;
+    let commissionCost = 0;
     if (carId) {
-      const { data: approved } = await supabase
-        .from("repair_items")
-        .select("amount")
-        .eq("car_id", carId)
-        .eq("status", "approved");
+      const [{ data: approved }, { data: deal }] = await Promise.all([
+        supabase.from("repair_items").select("amount").eq("car_id", carId).eq("status", "approved"),
+        supabase
+          .from("deals")
+          .select("commission_amount")
+          .eq("car_id", carId)
+          .eq("status", "delivered")
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+      ]);
       prepCost = (approved ?? []).reduce((sum, r) => sum + Number(r.amount), 0);
+      commissionCost = deal?.commission_amount != null ? Number(deal.commission_amount) : 0;
     }
     return {
       closed_at: new Date().toISOString(),
       closed_prep_cost: prepCost,
-      closed_total_cost: purchasePrice + prepCost + Number(transferFee ?? 0),
+      closed_commission_cost: commissionCost,
+      closed_total_cost:
+        purchasePrice + prepCost + Number(transferFee ?? 0) + Number(taxAmount ?? 0) + commissionCost,
     };
   }
 
   if (newStatus !== "sold" && wasSold) {
-    return { closed_at: null, closed_prep_cost: null, closed_total_cost: null };
+    return { closed_at: null, closed_prep_cost: null, closed_commission_cost: null, closed_total_cost: null };
   }
 
   return {};
@@ -258,6 +288,7 @@ function parseCarForm(formData: FormData): ParsedCar {
     condition_notes: optionalText(formData, "condition_notes"),
     purchase_price: purchasePrice,
     transfer_fee: optionalMoney(formData, "transfer_fee", "過戶費/規費"),
+    tax_amount: optionalMoney(formData, "tax_amount", "稅金/發票稅金"),
     detailing_cost: optionalMoney(formData, "detailing_cost", "整理美容成本"),
     repair_cost: optionalMoney(formData, "repair_cost", "整備維修成本"),
     floor_price: optionalMoney(formData, "floor_price", "底價"),
@@ -266,6 +297,7 @@ function parseCarForm(formData: FormData): ParsedCar {
     paid_amount: optionalMoney(formData, "paid_amount", "已付金額"),
     payment_method: optionalEnum(formData, "payment_method", VALID_PAYMENT_METHODS, "付款方式"),
     payment_note: optionalText(formData, "payment_note"),
+    purchased_by: optionalText(formData, "purchased_by"),
     transfer_date: optionalText(formData, "transfer_date"),
     transfer_status: optionalEnum(formData, "transfer_status", VALID_TRANSFER_STATUSES, "過戶狀態"),
     inspection_agency: optionalText(formData, "inspection_agency"),
@@ -278,6 +310,8 @@ function parseCarForm(formData: FormData): ParsedCar {
     // checkbox 只有勾選時才會出現在 FormData 裡，has() 就是「有沒有勾」。
     is_public: formData.has("is_public"),
     status: status as CarStatus,
+    body_type: optionalEnum(formData, "body_type", VALID_BODY_TYPES, "車型分類"),
+    is_featured: formData.has("is_featured"),
   };
 }
 
@@ -312,7 +346,8 @@ export async function createCar(
     null,
     values.status,
     values.purchase_price,
-    values.transfer_fee
+    values.transfer_fee,
+    values.tax_amount
   );
 
   // 新車不可能「已經」被標記過人頭（alreadyUsedAsNominee 一律 false），
@@ -328,7 +363,16 @@ export async function createCar(
   // （<tenant_id>/<car_id>/...），所以照片一定是第二步驟。
   const { data: inserted, error } = await supabase
     .from("cars")
-    .insert({ ...restValues, ...nomineeFields, ...closingFields, tenant_id: profile.tenant_id! })
+    .insert({
+      ...restValues,
+      ...nomineeFields,
+      ...closingFields,
+      tenant_id: profile.tenant_id!,
+      // 上架人：記錄是誰在系統裡新增這輛車，只在新增當下寫入一次，之後
+      // 編輯車輛（updateCar）不會、也不應該覆蓋這欄，見 types.ts 對
+      // Car.created_by 的說明。
+      created_by: profile.id,
+    })
     .select("id")
     .single();
 
@@ -403,7 +447,8 @@ export async function updateCar(
     (existingCar?.status as CarStatus | undefined) ?? null,
     values.status,
     values.purchase_price,
-    values.transfer_fee
+    values.transfer_fee,
+    values.tax_amount
   );
 
   // 二胎/人頭車防呆：已經標記過的車輛，表單這次送上來的 nominee_* 欄位
@@ -463,8 +508,19 @@ export async function updateCar(
   return { success: true, warning: photoWarning };
 }
 
-/** 快捷操作：只改狀態，不用開整個編輯表單。一樣會觸發結帳封存邏輯。 */
-export async function updateCarStatus(carId: string, status: CarStatus) {
+/**
+ * 快捷操作：只改狀態，不用開整個編輯表單。一樣會觸發結帳封存邏輯。
+ *
+ * finalPrice 是選填的最終成交價——快捷操作「設為已售出」原本只改
+ * status，完全不會寫入 final_price，車輛詳情頁「定價」區塊的「最終成交價」
+ * 因此永遠是空的（除非另外開編輯表單手動填，或走「買賣合約與交易」
+ * 建立合約、交車時由 syncCarStatusFromDeal() 自動同步過來）。這裡加這個
+ * 選填參數，讓車輛詳情頁（car-detail-modal.tsx）可以在點「設為已售出」
+ * 快捷按鈕的當下順便問一次成交價，一次到位，不用事後再回頭補。只有
+ * newStatus === 'sold' 且有帶值才會寫入，其餘狀態變更（退回整備中/
+ * 設為已預訂）完全不受影響。
+ */
+export async function updateCarStatus(carId: string, status: CarStatus, finalPrice?: number) {
   await requireTenantUser();
 
   if (!VALID_STATUSES.includes(status)) {
@@ -475,7 +531,7 @@ export async function updateCarStatus(carId: string, status: CarStatus) {
 
   const { data: existingCar } = await supabase
     .from("cars")
-    .select("status, purchase_price, transfer_fee")
+    .select("status, purchase_price, transfer_fee, tax_amount")
     .eq("id", carId)
     .single();
 
@@ -489,12 +545,18 @@ export async function updateCarStatus(carId: string, status: CarStatus) {
     existingCar.status as CarStatus,
     status,
     Number(existingCar.purchase_price),
-    existingCar.transfer_fee != null ? Number(existingCar.transfer_fee) : null
+    existingCar.transfer_fee != null ? Number(existingCar.transfer_fee) : null,
+    existingCar.tax_amount != null ? Number(existingCar.tax_amount) : null
   );
+
+  const finalPriceField =
+    status === "sold" && finalPrice != null && Number.isFinite(finalPrice)
+      ? { final_price: finalPrice }
+      : {};
 
   const { error } = await supabase
     .from("cars")
-    .update({ status, ...closingFields })
+    .update({ status, ...closingFields, ...finalPriceField })
     .eq("id", carId);
 
   if (error) {
@@ -503,6 +565,102 @@ export async function updateCarStatus(carId: string, status: CarStatus) {
 
   revalidatePath("/dashboard");
   return { success: true };
+}
+
+/**
+ * 從「買賣合約」狀態同步車輛庫存狀態 —— 給 deals-actions.ts 的
+ * createDeal / updateDeal 在合約成功寫入後呼叫。
+ *
+ * 為什麼需要這個：合約（deals）跟車輛庫存（cars）原本是兩個完全獨立的
+ * 表、也是兩個完全獨立的操作。業務把合約狀態改成「已交車」，車輛在
+ * 庫存列表、車行經營數據看板（AnalyticsModule 的「場內在庫營運狀況」
+ * 「本月成交台數」「已實現總毛利」全部只認 cars.status === 'sold'，
+ * 完全不會去看 deals 表）裡卻還是顯示成待售中／在庫資產，直到有人想到
+ * 要另外跑一趟車輛詳情頁手動改狀態——資料庫兩張表就這樣悄悄兜不起來。
+ *
+ * 只會把狀態往前推進，不會自動往回降級：
+ * - 合約簽約（signed）：車輛目前是 preparing/in_stock（都還沒被預訂）
+ *   才會推進成 reserved；已經是 reserved 或 sold 就不動，避免蓋掉更
+ *   進階的狀態。
+ * - 合約交車（delivered）：只要車輛還不是 sold，就推進成 sold，並沿用
+ *   跟 updateCarStatus 完全一樣的結帳封存邏輯（computeClosingFields），
+ *   確保這輛車不管是從詳情頁手動改、還是這裡自動改，封存的整備成本/
+ *   結帳快照算法永遠一致。
+ * - 合約如果事後被改回 draft/signed（例如訂正打錯的狀態），不會自動把
+ *   已經是 sold 的車輛打回 reserved／清掉結帳快照——那屬於「取消交易」
+ *   的更正動作，需要到車輛詳情頁手動處理，避免自動邏輯誤刪已經封存好
+ *   的財務紀錄。
+ *
+ * 找不到這輛車、或資料庫寫入失敗都只記錄錯誤，不拋出例外——车輛狀態
+ * 沒同步成功不該讓合約本身的新增/更新跟著失敗，那是兩件事。
+ *
+ * dealFinalPrice：合約上談定的成交價。交車（delivered）時會一併同步
+ * 寫進車輛的「最終成交價」欄位——不然車輛狀態雖然自動變成已售出，
+ * 「最終成交價」還是空的或維持舊值，業務得自己再手動打一次，忘了填的
+ * 話「已實現總毛利」這類數據會退回用「展示開價」估算，不是真正談定的
+ * 價格（見 analytics-module.tsx 的 revenueBasis）。這一步不受「只從
+ * preparing/in_stock 推進」那條限制——就算合約事後修正金額、車輛當下
+ * 已經是 sold，也應該把最新談定的價格同步過去，不然車輛紀錄上的成交價
+ * 會停在第一次交車當下的（可能打錯的）數字；但結帳成本快照
+ * （closed_prep_cost/closed_total_cost）只在「這次才第一次變成 sold」
+ * 才會重新計算，之後只是價格更正不會重算，維持既有「售出當下封存」的
+ * 設計。
+ */
+export async function syncCarStatusFromDeal(
+  carId: string,
+  dealStatus: DealStatus,
+  dealFinalPrice?: number | null
+) {
+  if (dealStatus !== "signed" && dealStatus !== "delivered") return;
+  if (!carId) return;
+
+  try {
+    const supabase = await createClient();
+    const { data: car } = await supabase
+      .from("cars")
+      .select("status, purchase_price, transfer_fee, tax_amount")
+      .eq("id", carId)
+      .single();
+    if (!car) return;
+
+    const currentStatus = car.status as CarStatus;
+
+    if (dealStatus === "delivered") {
+      const updatePayload: Record<string, unknown> = {};
+
+      if (dealFinalPrice != null) {
+        updatePayload.final_price = dealFinalPrice;
+      }
+
+      if (currentStatus !== "sold") {
+        const closingFields = await computeClosingFields(
+          supabase,
+          carId,
+          currentStatus,
+          "sold",
+          Number(car.purchase_price),
+          car.transfer_fee != null ? Number(car.transfer_fee) : null,
+          car.tax_amount != null ? Number(car.tax_amount) : null
+        );
+        updatePayload.status = "sold";
+        Object.assign(updatePayload, closingFields);
+      }
+
+      if (Object.keys(updatePayload).length === 0) return;
+
+      const { error } = await supabase.from("cars").update(updatePayload).eq("id", carId);
+      if (error) console.error(`[syncCarStatusFromDeal] 車輛 ${carId} 自動結帳失敗：`, error.message);
+      return;
+    }
+
+    // dealStatus === "signed"：只從還沒被預訂的狀態推進，不覆蓋 reserved/sold。
+    if (currentStatus === "preparing" || currentStatus === "in_stock") {
+      const { error } = await supabase.from("cars").update({ status: "reserved" }).eq("id", carId);
+      if (error) console.error(`[syncCarStatusFromDeal] 車輛 ${carId} 自動標記保留失敗：`, error.message);
+    }
+  } catch (e) {
+    console.error(`[syncCarStatusFromDeal] 車輛 ${carId} 狀態同步發生未預期錯誤：`, e);
+  }
 }
 
 /**
