@@ -17,6 +17,7 @@
 //    不會再被彈去別的地方，自然不可能跟任何頁面互相循環重導向。
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient } from "@supabase/ssr";
+import { VERIFIED_USER_ID_HEADER } from "@/lib/auth-header";
 
 const PROTECTED_PREFIXES = ["/dashboard", "/super-admin"];
 const PUBLIC_PREFIXES = ["/login", "/auth"];
@@ -27,23 +28,34 @@ function matchesPrefix(pathname: string, prefixes: string[]) {
   );
 }
 
+/** 一律先清掉外部請求本來可能就帶著的驗證標頭——見 auth-header.ts 的
+ * 安全前提說明：不管等一下要走哪個分支，都要先從一份「乾淨」的標頭
+ * 複本開始，確保這個標頭只可能是這支 middleware 自己驗證通過後才設的，
+ * 不會有任何分支讓外部偽造的值原封不動穿透到後面的 Server Component。 */
+function cleanRequestHeaders(request: NextRequest): Headers {
+  const headers = new Headers(request.headers);
+  headers.delete(VERIFIED_USER_ID_HEADER);
+  return headers;
+}
+
 export async function proxy(request: NextRequest) {
   const path = request.nextUrl.pathname;
+  const cleanHeaders = cleanRequestHeaders(request);
 
   // 公開路徑：完全不碰 Supabase、不重導向，永遠直接放行。
   if (matchesPrefix(path, PUBLIC_PREFIXES)) {
-    return NextResponse.next();
+    return NextResponse.next({ request: { headers: cleanHeaders } });
   }
 
   // 非受保護路徑（例如首頁 `/`）：一樣不需要 proxy 介入，交給頁面自己的
   // Server Component 判斷要不要導向，proxy 在這裡只會製造額外的重導向
   // 分支、增加迴圈風險，所以刻意什麼都不做。
   if (!matchesPrefix(path, PROTECTED_PREFIXES)) {
-    return NextResponse.next();
+    return NextResponse.next({ request: { headers: cleanHeaders } });
   }
 
   // 走到這裡才是真的受保護頁面，才需要驗證 session。
-  let response = NextResponse.next({ request });
+  let response = NextResponse.next({ request: { headers: cleanHeaders } });
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -57,7 +69,7 @@ export async function proxy(request: NextRequest) {
           cookiesToSet.forEach(({ name, value }) =>
             request.cookies.set(name, value)
           );
-          response = NextResponse.next({ request });
+          response = NextResponse.next({ request: { headers: cleanHeaders } });
           cookiesToSet.forEach(({ name, value, options }) =>
             response.cookies.set(name, value, options)
           );
@@ -73,7 +85,20 @@ export async function proxy(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   if (user) {
-    return response;
+    // 2026-08 效能優化：這裡已經對這次請求做過一次真正的網路驗證
+    // （getUser() 會連線 Supabase Auth 確認 token 沒被竄改、沒過期），
+    // 把驗證結果轉發給後面的 Server Component，dal.ts 的
+    // getCurrentProfile() 看到這個標頭就不用再對 Supabase Auth 打第二次
+    // 網路來回——見 auth-header.ts 的完整安全前提說明。
+    cleanHeaders.set(VERIFIED_USER_ID_HEADER, user.id);
+    const verifiedResponse = NextResponse.next({ request: { headers: cleanHeaders } });
+    // 上面 getUser() 過程中若刷新了過期 token，刷新後的 cookie 會寫進
+    // `response`；這裡把它們原封不動搬到帶有驗證標頭的最終回應上，
+    // 避免剛刷新好的 session 被平白丟掉。
+    response.cookies.getAll().forEach((cookie) => {
+      verifiedResponse.cookies.set(cookie);
+    });
+    return verifiedResponse;
   }
 
   const url = request.nextUrl.clone();
