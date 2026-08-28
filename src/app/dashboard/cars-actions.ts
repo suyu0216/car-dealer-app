@@ -73,9 +73,11 @@ interface ParsedCar {
   // 前台展示開關
   is_public: boolean;
   status: CarStatus;
-  // 車型分類／熱門推薦——見 types.ts 對 Car.body_type / is_featured 的說明。
+  // 車型分類／熱門推薦／大圖卡——見 types.ts 對 Car.body_type /
+  // is_featured / is_large_card 的說明。
   body_type: (typeof VALID_BODY_TYPES)[number] | null;
   is_featured: boolean;
+  is_large_card: boolean;
 }
 
 interface ClosingFields {
@@ -312,6 +314,7 @@ function parseCarForm(formData: FormData): ParsedCar {
     status: status as CarStatus,
     body_type: optionalEnum(formData, "body_type", VALID_BODY_TYPES, "車型分類"),
     is_featured: formData.has("is_featured"),
+    is_large_card: formData.has("is_large_card"),
   };
 }
 
