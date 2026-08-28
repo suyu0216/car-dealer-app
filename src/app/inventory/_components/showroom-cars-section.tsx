@@ -531,19 +531,35 @@ function FilterDrawer({
 /** 「本月焦點車款」全版首圖——2026-08 新增，見上面 heroCar 的說明。
  * 樣式沿用使用者參考檔案的 .hero（大圖滿版＋底部漸層蓋文字），CTA 按鈕
  * 用跟品牌簡介頁同一套 .btn-flow 導流曲線按鈕（曜石灰底版本），點下去
- * 直接開這台車的詳情 Modal，不用另外導頁。 */
+ * 直接開這台車的詳情 Modal，不用另外導頁。
+ *
+ * 2026-08 修正「大圖顯示全黑、照片完全不見」：FadeImage 元件內部固定會把
+ * 自己的最外層 wrapper 疊上 `relative`（見 fade-image.tsx），如果呼叫端
+ * 又直接把 `absolute inset-0` 透過 className 傳進去，wrapper 身上會同時
+ * 出現 `relative` 跟 `absolute` 這兩個互斥的 position class——Tailwind
+ * 產生的樣式表裡 `.relative` 剛好排在 `.absolute` 後面，兩者 CSS
+ * 優先度相同時「後宣告的贏」，結果 wrapper 實際套用到的是
+ * position:relative，`inset-0` 對 relative 元素不會撐開尺寸，
+ * `h-full`/`w-full` 又因為父層是 `flex items-end`（子層預設不會被撐滿）
+ * 算出來變成 0px 高，照片因此完全不可見、只剩底下的深色背景／漸層蓋在
+ * 上面，看起來就是「整塊全黑」。修法是不要把 `absolute inset-0` 交給
+ * FadeImage 的 className，改成外層自己包一層真正的 `absolute inset-0`
+ * 容器，FadeImage 只需要負責填滿這層容器（`h-full w-full` 即可），兩邊
+ * 的 position 宣告不會再疊在同一個元素上。 */
 function FeaturedCarHero({ car, onSelect }: { car: ShowroomCar; onSelect: () => void }) {
   return (
     <div className="relative mb-10 flex min-h-[300px] items-end overflow-hidden rounded-[20px] bg-[#171717] sm:min-h-[420px]">
       {car.image_url ? (
-        <FadeImage
-          src={car.image_url}
-          alt={`${car.brand ?? ""} ${car.model_name}`}
-          className="absolute inset-0 h-full w-full"
-          imgClassName="object-cover"
-          loading="eager"
-          fetchPriority="high"
-        />
+        <div className="absolute inset-0 h-full w-full">
+          <FadeImage
+            src={car.image_url}
+            alt={`${car.brand ?? ""} ${car.model_name}`}
+            className="h-full w-full"
+            imgClassName="object-cover"
+            loading="eager"
+            fetchPriority="high"
+          />
+        </div>
       ) : (
         <div className="absolute inset-0 bg-gradient-to-br from-[#171717] via-[#404040] to-[#171717]" />
       )}
