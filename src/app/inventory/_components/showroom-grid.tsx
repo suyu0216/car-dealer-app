@@ -24,11 +24,20 @@ function isRecentlyListed(createdAt: string): boolean {
  * 開頭「視覺風格」的完整說明。
  *
  * 2026-08：使用者上傳「雜誌選書」排版的參考檔案（inventoryv4magazine.html）
- * 要求「前台改成這樣」——桌機版（lg 以上）改成「第一格放大成 2×2」的
- * 雜誌感 bento 格狀（第一格通常剛好是排序最新／篩選後第一筆結果，天然
- * 有種「這台最值得先看」的效果，不需要額外邏輯去指定哪台車該放大）；
- * 手機／平板螢幕還不夠寬，放大格反而佔太多版面，維持原本大小一致的
- * 一般格狀，跟參考檔案本身在窄螢幕收斂成一般格狀是同一個道理。 */
+ * 要求「前台改成這樣」——桌機版（lg 以上）挑出一部分車輛放大成 2×2 的
+ * 雜誌感 bento 格狀；手機／平板螢幕還不夠寬，放大格反而佔太多版面，
+ * 維持原本大小一致的一般格狀，跟參考檔案本身在窄螢幕收斂成一般格狀是
+ * 同一個道理。
+ *
+ * 2026-08 第二輪：使用者明確要求「哪些車要大圖、哪些要小圖，我要能自己
+ * 設定」——原本是自動挑排序第一台放大，改成看每台車自己的
+ * `is_large_card`（後台「大圖卡」開關，見 car-form-modal.tsx）。車行還
+ * 沒開始使用這個開關（清單裡沒有任何一台車勾選）的話，退回舊行為（第一
+ * 台放大），保留改版當下的雜誌感預設外觀，不會因為她還沒設定就整排變成
+ * 死板的一般格狀；只要她勾了至少一台，就完全照她勾的來，不再混用自動
+ * 邏輯。可以同時勾多台變大圖——`lg:grid-flow-row-dense` 讓瀏覽器自動把
+ * 後面的一般格狀車輛「回填」進放大格之間留下的空隙，不管勾幾台、勾在
+ * 清單哪個位置，版面都不會因此出現破洞。 */
 export function ShowroomGrid({
   cars,
   photosByCarId,
@@ -41,13 +50,15 @@ export function ShowroomGrid({
   photosByCarId?: Record<string, string[]>;
   onSelect: (car: ShowroomCar) => void;
 }) {
+  const anyManuallyLarge = cars.some((c) => c.is_large_card);
+
   return (
-    <div className="mt-6 grid grid-cols-2 gap-4 sm:gap-5 lg:grid-cols-4 lg:auto-rows-[1fr]">
+    <div className="mt-6 grid grid-cols-2 gap-4 sm:gap-5 lg:grid-cols-4 lg:auto-rows-[1fr] lg:grid-flow-row-dense">
       {cars.map((car, i) => (
         <ShowroomCard
           key={car.id}
           car={car}
-          large={i === 0}
+          large={anyManuallyLarge ? car.is_large_card : i === 0}
           photoCount={photosByCarId?.[car.id]?.length ?? 0}
           onClick={() => onSelect(car)}
         />

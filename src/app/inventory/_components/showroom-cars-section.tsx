@@ -221,14 +221,19 @@ export function ShowroomCarsSection({
 
   // 2026-08：使用者上傳「雜誌選書」排版的參考檔案（inventoryv4magazine.html）
   // 要求「前台改成這樣」——參考檔案最上面有一格「本月焦點車款」大幅全版
-  // 首圖。這裡沒有後台額外欄位可以指定「哪台是本月焦點」，用跟首頁「熱門
-  // 車款」同一份真實資料：優先挑第一台 is_featured（熱門推薦）的車，車行
-  // 沒標記任何一台的話退回第一台在售車輛（依 cars 傳進來的順序，通常是
-  // 最新上架）——一律是車行自己資料裡真的存在的車，不是憑空塞一台假的。
-  // 只在「沒有任何篩選、沒有從其他頁面帶著特定車輛/分類的深連結」這個
-  // 最乾淨的預設瀏覽狀態才顯示，篩選之後這格佔的版面對「快速看篩選結果」
-  // 反而是干擾，所以篩選當下就不顯示。
-  const heroCar = !hasActiveFilter && !initialCarId ? cars.find((c) => c.is_featured) ?? cars[0] ?? null : null;
+  // 首圖。挑選順序：優先用車行自己在後台勾的「大圖卡」（is_large_card，
+  // 見 showroom-grid.tsx 開頭的說明），沒有勾任何一台的話退回舊邏輯——
+  // 第一台 is_featured（熱門推薦）的車，再退回第一台在售車輛（依 cars
+  // 傳進來的順序，通常是最新上架）——一律是車行自己資料裡真的存在的車，
+  // 不是憑空塞一台假的。只在「沒有任何篩選、沒有從其他頁面帶著特定
+  // 車輛/分類的深連結」這個最乾淨的預設瀏覽狀態才顯示，篩選之後這格佔的
+  // 版面對「快速看篩選結果」反而是干擾，所以篩選當下就不顯示。
+  const heroCar = !hasActiveFilter && !initialCarId
+    ? cars.find((c) => c.is_large_card) ?? cars.find((c) => c.is_featured) ?? cars[0] ?? null
+    : null;
+  // 焦點車款已經在上面大圖呈現過一次，下面的格狀清單要把它濾掉，不然
+  // 同一台車會在同一個畫面重複出現兩次。
+  const gridCars = heroCar ? filteredCars.filter((c) => c.id !== heroCar.id) : filteredCars;
 
   return (
     <>
@@ -320,7 +325,7 @@ export function ShowroomCarsSection({
               </div>
             ) : (
               <ShowroomGrid
-                cars={filteredCars}
+                cars={gridCars}
                 photosByCarId={photosByCarId}
                 onSelect={(car) => setSelectedId(car.id)}
               />
