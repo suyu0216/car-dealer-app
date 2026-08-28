@@ -586,13 +586,28 @@ create policy "profiles_select_same_tenant"
   );
 
 -- 角色權限管理（RBAC）：車行管理員可以修改「同車行」其他員工的角色與三個
--- 權限開關（can_view_cost / can_view_salary / can_edit_cars）。
+-- 權限開關（can_view_cost / can_view_salary / can_edit_cars），也可以把
+-- 員工「移出本車行」（見 settings-module.tsx 的 handleRemoveStaff，做法是
+-- 把該員工的 tenant_id 更新成 null，解除跟這間車行的連結）。
 -- with check 特別限制 role 只能設成 tenant_admin 或 staff——不能透過這個
 -- policy 把自己或別人的角色改成 super_admin（防止權限提升）；tenant_id
--- 也強制要求改完之後還是同一個車行，不能把員工轉走或轉進別的車行。
+-- 允許維持原車行（改角色/權限用）或改成 null（移出車行用）這兩種結果，
+-- 但不允許改成「別間車行的 tenant_id」——因為管理員自己的
+-- current_tenant_id() 是固定值，這裡沒有開放「current_tenant_id() 以外、
+-- 又不是 null」的第三種可能，不會造成把員工轉移到別的車行這種資料外洩
+-- 風險。
+--
+-- 2026-08 修正：原本 with check 要求「改完之後 tenant_id 一定要等於管理員
+-- 自己的 tenant_id」，這在邏輯上直接堵死「移出本車行」這個操作（那個
+-- 操作的整個目的就是把 tenant_id 改成 null），導致「帳號與權限管理」頁
+-- 的「移出本車行」按鈕對任何車行的管理員來說都一定失敗，不是「這個人不是
+-- 管理員」的問題。同時把 role 檢查獨立出來、對「留在原車行」跟「移出」
+-- 兩種情況都適用，避免「移出」這個分支變成可以順便把目標帳號的 role 改成
+-- super_admin 的提權漏洞。
 -- 實際上要防止「自己改自己」這種誤操作，是在 Server Action 那層擋
--- （見 src/app/dashboard/staff-actions.ts），RLS 這裡只負責租戶邊界跟
--- 角色提升這兩件事。
+-- （見 src/app/dashboard/staff-actions.ts；「移出本車行」則是前端擋，見
+-- settings-module.tsx 的 isSelf 判斷），RLS 這裡只負責租戶邊界跟角色提升
+-- 這兩件事。
 drop policy if exists "profiles_tenant_admin_manage" on public.profiles;
 create policy "profiles_tenant_admin_manage"
   on public.profiles for update
@@ -601,10 +616,100 @@ create policy "profiles_tenant_admin_manage"
     and public.current_role_name() = 'tenant_admin'
   )
   with check (
-    tenant_id = public.current_tenant_id()
-    and public.current_role_name() = 'tenant_admin'
+    public.current_role_name() = 'tenant_admin'
     and role in ('tenant_admin', 'staff')
+    and (tenant_id = public.current_tenant_id() or tenant_id is null)
   );
+
+-- 2026-08：另外還有一個 BEFORE UPDATE trigger 疊加在 profiles 表上，功能
+-- 上跟上面這條 RLS policy 幾乎一樣（多一層防線），這裡一併補進文件——
+-- 這個 trigger 先前只存在於線上資料庫，這份檔案裡漏記，導致後續維護時
+-- 誤以為只有上面那條 RLS policy 在把關，這次順便補齊，避免下次又對不上。
+create or replace function public.guard_profiles_sensitive_update()
+returns trigger
+language plpgsql
+set search_path to 'public'
+as $function$
+begin
+  if (new.role is distinct from old.role)
+     or (new.tenant_id is distinct from old.tenant_id)
+     or (new.can_view_cost is distinct from old.can_view_cost)
+     or (new.can_view_salary is distinct from old.can_view_salary)
+     or (new.can_edit_cars is distinct from old.can_edit_cars)
+  then
+    if public.is_super_admin() then
+      return new;
+    end if;
+
+    if public.current_role_name() = 'tenant_admin'
+       and old.tenant_id = public.current_tenant_id()
+       and (new.tenant_id = old.tenant_id or new.tenant_id is null)
+       and new.id <> auth.uid()
+       and new.role = any (array['tenant_admin', 'staff'])
+    then
+      return new;
+    end if;
+
+    raise exception '沒有權限變更角色或權限設定' using errcode = '42501';
+  end if;
+
+  return new;
+end;
+$function$;
+
+drop trigger if exists guard_profiles_sensitive_update on public.profiles;
+create trigger guard_profiles_sensitive_update
+  before update on public.profiles
+  for each row execute function public.guard_profiles_sensitive_update();
+
+-- 「移出本車行」（settings-module.tsx 的 handleRemoveStaff）改用這支
+-- SECURITY DEFINER 函式，不再直接對 profiles 下 client-side .update()。
+--
+-- 原因：實測發現，就算上面 RLS policy／trigger 都已經放行「tenant_id 改
+-- 成 null」這件事，PostgreSQL 對 UPDATE 還有一條內建規則——「改完之後的
+-- 新資料列，必須還能通過資料表上其他 SELECT policy 的檢查」，否則照樣會
+-- 被 RLS 擋下來（new row violates row-level security policy）。但「移出
+-- 本車行」的目的正是讓這筆資料在任何 SELECT policy 底下都不再可見（不
+-- 屬於任何車行），這跟那條內建規則互相矛盾。不能靠放寬 SELECT policy
+-- 解決——那樣會變成任何車行的管理員都能查到「全平台」被移出過的員工
+-- 名單，造成跨車行資料外洩。改用 SECURITY DEFINER 函式，內部不受呼叫者
+-- 的 RLS 限制，改成在函式自己的程式邏輯裡明確檢查權限，檢查嚴謹程度不輸
+-- RLS，只是用程式碼明確表達，不依賴「改完是否還看得到」這個 RLS 的隱性
+-- 前提。
+create or replace function public.remove_staff_from_tenant(target_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_caller_tenant uuid;
+begin
+  if public.current_role_name() <> 'tenant_admin' then
+    raise exception '沒有權限執行這項操作，請聯繫車行管理員。' using errcode = '42501';
+  end if;
+
+  if target_id = auth.uid() then
+    raise exception '無法在這裡移除自己，請請另一位管理員協助。' using errcode = '42501';
+  end if;
+
+  v_caller_tenant := public.current_tenant_id();
+
+  update public.profiles
+    set tenant_id = null,
+        can_view_cost = false,
+        can_view_salary = false,
+        can_edit_cars = false
+    where id = target_id
+      and tenant_id = v_caller_tenant;
+
+  if not found then
+    raise exception '找不到這個員工，或該員工不屬於你的車行。' using errcode = '42501';
+  end if;
+end;
+$$;
+
+grant execute on function public.remove_staff_from_tenant(uuid) to authenticated;
 
 -- -----------------------------------------------------------------------------
 -- cars policies
