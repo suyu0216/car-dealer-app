@@ -31,6 +31,9 @@ export type ShowroomCar = Pick<
   | "color"
   | "selling_price"
   | "image_url"
+  | "created_at"
+  | "body_type"
+  | "is_featured"
 >;
 
 /**
@@ -48,8 +51,14 @@ export const PUBLIC_SHOWROOM_STATUSES = ["in_stock", "reserved"] as const;
 // 除了原本的卡片欄位，加上車輛詳情用的規格欄位（領牌年份/里程/排氣量/
 // 傳動）——一樣是不涉及任何內部帳務的公開規格，跟後台列印展示卡
 // （car-detail-modal.tsx 的 PrintSpec）給客人看的資訊同一個等級。
+// created_at 是給前台「近期上架」標籤用的（見 showroom-grid.tsx）——只是
+// 這輛車「什麼時候被加進系統」的時間戳記，不是財務欄位，公開沒有安全
+// 疑慮；標籤本身用真實資料，不是憑空捏造的「熱門/搶購」假訊息。
+// body_type（車型分類）／is_featured（熱門推薦）給前台展間頁上方的分類
+// 選單用——is_featured 是後台手動開關的真實資料，不是系統自動判斷，
+// 跟上面「近期上架」標籤同一個原則：不寫憑空捏造的熱門/搶購假訊息。
 const SHOWROOM_CAR_COLUMNS =
-  "id, brand, model_name, year, license_year, mileage, engine_cc, transmission, color, selling_price, image_url";
+  "id, brand, model_name, year, license_year, mileage, engine_cc, transmission, color, selling_price, image_url, created_at, body_type, is_featured";
 
 /**
  * 車輛列表／詳情頁共用的查詢起點：只回傳「這個車行、公開展示、待售中或
@@ -68,6 +77,29 @@ export function publicShowroomCarsQuery(supabase: SupabaseServerClient, tenantId
     .eq("tenant_id", tenantId)
     .eq("is_public", true)
     .in("status", PUBLIC_SHOWROOM_STATUSES)
+    .is("deleted_at", null);
+}
+
+/**
+ * 「成交案例／已售出」展示區塊用——查詢已售出（status = 'sold'）的公開
+ * 車輛，做信任背書用途。跟 publicShowroomCarsQuery() 用同一組安全欄位
+ * 白名單（SHOWROOM_CAR_COLUMNS），特別注意這裡「不」select final_price／
+ * closed_total_cost 等結帳欄位——成交案例只是展示用途，不需要（也不該）
+ * 對外公開實際成交金額，前台畫面改顯示「已成功交車」文字而不是價格，見
+ * showroom-page.tsx 的成交案例區塊。
+ *
+ * 依賴 supabase_schema.sql 的 cars_public_showroom_read policy 2026-08
+ * 已放行 status = 'sold'（原本只允許 in_stock/reserved），這裡才查得到；
+ * 這條 policy 沒放行的話，這支查詢一律回傳空陣列，不會出錯但也看不到
+ * 任何資料。
+ */
+export function publicShowroomSoldCarsQuery(supabase: SupabaseServerClient, tenantId: string) {
+  return supabase
+    .from("cars")
+    .select(SHOWROOM_CAR_COLUMNS)
+    .eq("tenant_id", tenantId)
+    .eq("is_public", true)
+    .eq("status", "sold")
     .is("deleted_at", null);
 }
 
