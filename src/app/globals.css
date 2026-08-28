@@ -3,6 +3,10 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
+  /* 跟 layout.tsx 的 viewport.colorScheme 是同一件事的雙重保險——有些手機
+     瀏覽器看 HTML meta 標籤，有些看 CSS 屬性，兩邊都寫確保都吃得到，避免
+     停用「自動幫深色模式使用者調整網頁顏色」這個功能失敗。 */
+  color-scheme: light;
 }
 
 @theme inline {
@@ -19,10 +23,85 @@
   }
 }
 
+/* 全站捲軸改成細緻的灰色系，取代瀏覽器/作業系統預設又粗又搶眼的捲軸——
+   細節雖小，但在整體黑白灰、講究留白的設計裡，預設捲軸反而是最顯眼的
+   「沒設計過」的地方。這裡是 Firefox 的寫法（scrollbar-width/
+   scrollbar-color），下面另外用 -webkit-scrollbar 系列涵蓋
+   Chrome/Safari/新版 Edge，兩邊都要寫才能涵蓋主流瀏覽器。
+   注意：這裡刻意不加全站 `scroll-behavior: smooth`——這個站台目前沒有
+   任何頁內錨點跳轉，唯一會用到捲動的地方（相簿滑動、五個頁面之間切換）
+   都是各自獨立處理（相簿容器自己已經有 scroll-smooth；頁面切換是
+   Next.js 路由層級的整頁導覽，不是同頁錨點），全站硬加這個屬性反而可能
+   讓「切換頁面時瀏覽器把捲動位置重置回頂端」這個動作被意外拖成有動畫的
+   慢速捲動，變得不像使用者要的「更滑順」，比較像「變慢」。 */
+html {
+  scrollbar-width: thin;
+  scrollbar-color: #D4D4D4 transparent;
+}
+
+/* 選取文字反白時用品牌黑，取代瀏覽器預設的藍紫色反白——跟橘紅色價格、
+   黑白灰主色調維持同一套視覺語言，是很容易被忽略但一比對就會發現「這裡
+   還是預設樣式」的細節。 */
+::selection {
+  background: #171717;
+  color: #ffffff;
+}
+
+/* 鍵盤操作（Tab 鍵）時的焦點外框改用品牌黑，取代瀏覽器預設藍色外框——
+   維持可以清楚看到焦點在哪（無障礙必要），同時跟整體黑白灰配色一致。
+   只在鍵盤導覽時出現（:focus-visible），滑鼠點擊不會觸發，不會讓畫面
+   看起來一直有多餘的外框。 */
+:focus-visible {
+  outline: 2px solid #171717;
+  outline-offset: 2px;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: #D4D4D4;
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: #A3A3A3;
+  background-clip: padding-box;
+}
+
+/* 使用者在作業系統裡開了「減少動態效果」的無障礙設定時，把這次新加的
+   所有淡入／位移／縮放過場動畫全部縮成幾乎瞬間完成——這類設定通常是
+   因為動態效果會讓使用者頭暈不適，尊重這個設定比「看起來滑順」更重要。
+   用萬用選擇器統一處理，不用回頭一個一個元件加例外。 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  /* 2026-08 修正：這裡原本寫死 Arial, Helvetica, sans-serif，蓋掉了
+     layout.tsx 用 next/font/google 載入、掛在 <html> 上的 Geist Sans
+     （--font-geist-sans 這個 CSS 變數，見 @theme inline 裡的
+     --font-sans）——等於載入了一套質感比較好的字體，卻整站都沒真的
+     用到，全部退回瀏覽器最普通的系統字。改成直接套用這個變數（保留
+     Arial/Helvetica/系統字當最後備援，字體還沒載入完成或載入失敗時
+     不會開天窗），不需要多下載任何東西，全站文字質感一次提升。 */
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
 }
 
 /* 前台展間相簿的滑動容器用：捲軸本身用手勢/箭頭/縮圖操作就好，不需要看到
@@ -34,4 +113,386 @@ body {
 
 .no-scrollbar::-webkit-scrollbar {
   display: none; /* Chrome/Safari/新版 Edge */
+}
+
+/* 顧客前台展間（/inventory）「亮白暖色展間風」標題粗黑體——字體本身由
+   inventory/layout.tsx 的 next/font/google（Noto Sans TC 700/900）載入並
+   掛上 --font-showroom-display 這個 CSS 變數，這裡只是給一個好記的 class
+   名稱套用，不影響全站其他頁面（這個變數只在 /inventory 路由子樹底下才
+   存在）。改版原因見 inventory/layout.tsx 開頭的說明：深色＋襯線字體的
+   「精品藝廊風」讓人覺得太理性冷靜、不太想買車，改用粗黑體讓標題／價格
+   更有行動力道。 */
+.font-showroom-display {
+  font-family: var(--font-showroom-display), "Noto Sans TC", "PingFang TC",
+    "Microsoft JhengHei", "Heiti TC", sans-serif;
+  font-weight: 800;
+}
+
+/* 登入頁／設定密碼頁的輸入框共用——第二個查到、也很可能是使用者反映
+   「文字顏色太淺」的原因：手機瀏覽器（尤其 Chrome/Safari）如果之前存過
+   這個帳號的 Email，打開頁面時可能會「自動幫你把欄位填上」，這時候瀏覽器
+   會用「它自己的」底色跟文字顏色蓋在畫面上——這個蓋色是瀏覽器原生行為，
+   一般的 CSS（color、background-color）完全蓋不掉，要用底下這兩個
+   -webkit 開頭的專屬屬性才蓋得掉。沒加這段的話，就算我們自己寫的
+   className 是 text-black，只要瀏覽器觸發自動填入，畫面上看到的顏色其實
+   是瀏覽器自己決定的顏色，不是我們寫的顏色——這也能解釋「改了還是一樣」。 */
+.auth-input {
+  color-scheme: light;
+}
+
+.auth-input:-webkit-autofill,
+.auth-input:-webkit-autofill:hover,
+.auth-input:-webkit-autofill:focus {
+  -webkit-text-fill-color: #000000;
+  caret-color: #000000;
+  -webkit-box-shadow: 0 0 0px 1000px #fbf6ec inset;
+  box-shadow: 0 0 0px 1000px #fbf6ec inset;
+  /* 避免自動填入觸發時，底色用「瞬間變色」的動畫蓋掉我們設定的底色。 */
+  transition: background-color 9999s ease-in-out 0s;
+}
+
+/* ============================================================
+   前台按鈕材質系統 v2（2026-08 第二輪）——使用者提供了一份實際的參考
+   檔案（car-buttons.css / carbuttonsdemo.html），裡面是五種汽車官網
+   按鈕質感的完整原始碼：鍍鉻掃光（主要 CTA）、碳纖維紋理＋掃光底線
+   （次要行動）、曜石霧光＋旋轉光框（特色互動）、極簡描邊＋滑出底線
+   （輔助連結）、點火紅圓鍵＋脈動光暈（特殊互動）。
+
+   參考檔案本身是深色賽車風（黑底、紅色強調），但使用者先前已經明確
+   要求前台維持「舒服、高級的淺色配色」（不要深色底），所以這裡不是
+   整段照搬參考檔案的顏色，而是把五種「動態手法」原封不動保留，只把
+   強調色從紅色換成展間既有的金棕色 #BFA074，背景維持白／米色——跟
+   showroom-shared.tsx 開頭「按鈕質感系統（2026-08）」是同一套四階
+   分類，這裡是把當時「只靠顏色變化」的做法，升級成參考檔案裡「顏色+
+   動態」的完整質感。
+
+   五個分類對應：
+   - .btn-tex-primary（主要行動，對應參考檔案 btn-chrome）：hover 時
+     一道淡金色光斜線由左至右掃過，疊在既有的黑↔白反轉效果上面。
+   - .btn-tex-secondary（次要行動，對應 btn-carbon）：需要搭配一個
+     .btn-tex-underline 子元素，hover 時金棕色細線由左至右「長出來」
+     （scaleX 0→1），取代參考檔案的紅色底線。
+   - .btn-tex-feature（特色互動，對應 btn-glass）：hover 時外圈浮出一圈
+     會旋轉的金棕漸層光框，不需要深色霧面背景也能運作（純邊框動畫）。
+   - .btn-tex-link（輔助連結，對應 btn-line）：需要搭配一個
+     .btn-tex-rule 子元素，hover 時金棕色底線由左至右滑入。
+   - .btn-tex-icon（特殊互動，對應 btn-ignite）：常駐一圈極淡的金棕
+     呼吸光暈，只用在真的稀少、有「特殊」感的圖示鍵（頁尾社群圖示），
+     相簿/燈箱/Modal 這類會被連續快速點擊的導覽圖示鍵不套用常駐動畫
+     （避免連續操作時畫面一直在跳動、反而分散注意力），改成按下瞬間
+     一次性的光暈爆發，見各元件自己的 active: 樣式。
+
+   全部动画都遵守本檔案最上面已經有的
+   `@media (prefers-reduced-motion: reduce)` 全站規則，開了「減少動態
+   效果」的使用者會自動把這裡新增的所有動畫/過場都壓縮成幾乎瞬間完成，
+   不需要另外處理。
+   ============================================================ */
+
+.btn-tex-primary {
+  position: relative;
+  overflow: hidden;
+}
+.btn-tex-primary::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -60%;
+  width: 40%;
+  height: 100%;
+  background: linear-gradient(115deg, transparent, rgba(191, 160, 116, 0.65), transparent);
+  transform: skewX(-20deg);
+  transition: left 0.7s ease;
+  pointer-events: none;
+}
+.btn-tex-primary:hover::before {
+  left: 130%;
+}
+
+.btn-tex-secondary {
+  position: relative;
+}
+.btn-tex-underline {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 5px;
+  height: 2px;
+  background: #bfa074;
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 0 8px rgba(191, 160, 116, 0.55);
+  pointer-events: none;
+}
+.btn-tex-secondary:hover .btn-tex-underline {
+  transform: scaleX(1);
+}
+
+.btn-tex-feature {
+  position: relative;
+  isolation: isolate;
+}
+.btn-tex-feature::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1.5px;
+  background: conic-gradient(from 0deg, #bfa074, transparent 25%, transparent 75%, #bfa074);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  opacity: 0;
+  animation: btn-tex-spin 3.6s linear infinite;
+  transition: opacity 0.3s ease;
+  pointer-events: none;
+  z-index: 1;
+}
+.btn-tex-feature:hover::before {
+  opacity: 1;
+}
+@keyframes btn-tex-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.btn-tex-link {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+.btn-tex-rule {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -3px;
+  height: 1px;
+  background: #bfa074;
+  transform: translateX(-100%);
+  transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+  pointer-events: none;
+}
+.btn-tex-link:hover .btn-tex-rule {
+  transform: translateX(0);
+}
+
+.btn-tex-icon {
+  animation: btn-tex-breathe 3.2s ease-in-out infinite;
+}
+@keyframes btn-tex-breathe {
+  0%,
+  100% {
+    box-shadow: 0 0 0 1px rgba(191, 160, 116, 0.16), 0 10px 20px -6px rgba(0, 0, 0, 0.35);
+  }
+  50% {
+    box-shadow: 0 0 0 1px rgba(191, 160, 116, 0.42), 0 10px 20px -6px rgba(0, 0, 0, 0.35);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .btn-tex-primary::before,
+  .btn-tex-feature::before,
+  .btn-tex-icon {
+    animation: none;
+  }
+}
+
+/* ============================================================
+   點火按鈕（.btn-ignite，2026-08 第六輪）——使用者一開始要求把內圈
+   原本參考檔案的「點火紅」換成展間金棕色（避免跟按鈕系統的用色原則
+   打架），但後來使用者在把這顆按鈕用到「加 LINE」系列按鈕之後，
+   明確表示「我要紅色」——改回參考檔案原本的紅（沿用跟頁首橫幅斜切
+   角同一組紅色 #E2192F／#6E0F1A，全站只有這一種紅，不再另外引入
+   金棕色版本的點火按鈕，也不生第三種紅）。這顆元件目前有兩個使用
+   場景共用同一套樣式：頁首／手機浮動的「加 LINE 專人服務」，以及
+   首頁首圖橫幅的「放大檢視」——兩者現在都會是紅色內圈，是同一顆
+   元件本來就該有的行為，不是只改其中一個。 */
+.btn-ignite-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.btn-ignite {
+  position: relative;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  background: radial-gradient(circle at 35% 30%, #3a3d43, #17181b 70%);
+  box-shadow:
+    0 0 0 1px #303339,
+    0 0 0 4px #101113,
+    0 0 0 5px #2c2f34,
+    0 10px 20px -8px rgba(0, 0, 0, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.18s ease;
+}
+.btn-ignite::before {
+  content: "";
+  position: absolute;
+  inset: 8px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 40% 30%, #ff6b6b, #e2192f 55%, #6e0f1a 100%);
+  box-shadow:
+    0 0 14px 2px rgba(226, 25, 47, 0.55),
+    0 2px 0 rgba(255, 255, 255, 0.25) inset,
+    0 -3px 6px rgba(0, 0, 0, 0.4) inset;
+  animation: btn-ignite-pulse 2.4s ease-in-out infinite;
+}
+.btn-ignite svg {
+  position: relative;
+  z-index: 2;
+  width: 15px;
+  height: 15px;
+}
+.btn-ignite:hover {
+  transform: scale(1.05);
+}
+.btn-ignite:active {
+  transform: scale(0.94);
+}
+.btn-ignite:active::before {
+  animation: none;
+  box-shadow: 0 0 20px 5px rgba(226, 25, 47, 0.6);
+}
+@keyframes btn-ignite-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 10px 1px rgba(226, 25, 47, 0.5), 0 2px 0 rgba(255, 255, 255, 0.25) inset,
+      0 -3px 6px rgba(0, 0, 0, 0.4) inset;
+  }
+  50% {
+    box-shadow: 0 0 18px 4px rgba(226, 25, 47, 0.65), 0 2px 0 rgba(255, 255, 255, 0.25) inset,
+      0 -3px 6px rgba(0, 0, 0, 0.4) inset;
+  }
+}
+
+/* 2026-08 第八輪：使用者要求「手機版的按鈕不要是紅色，改成 LINE 的
+   顏色」——這裡指的是手機版右下角常駐的浮動「加 LINE」按鈕（見
+   showroom-shell.tsx 最下面），不是首頁首圖橫幅的「放大檢視」按鈕，
+   兩者共用同一顆 .btn-ignite 元件（外殼尺寸/形狀/呼吸動畫一致），
+   所以不能直接改 .btn-ignite::before 本身（那樣會連放大檢視也一起
+   變色）。改成額外疊一個 .btn-ignite-line 修飾 class，只蓋掉內圈的
+   顏色/陰影/呼吸動畫的顏色部分，換成 LINE 官方綠 #06C755（跟前台其他
+   地方「加 LINE」矩形按鈕的綠色同一個值，不生第二種綠），外殼形狀跟
+   動畫時間軸完全沿用 .btn-ignite 不用重複定義。 */
+.btn-ignite-line::before {
+  background: radial-gradient(circle at 40% 30%, #4be08a, #06c755 55%, #04893a 100%);
+  box-shadow:
+    0 0 14px 2px rgba(6, 199, 85, 0.55),
+    0 2px 0 rgba(255, 255, 255, 0.25) inset,
+    0 -3px 6px rgba(0, 0, 0, 0.4) inset;
+  animation: btn-ignite-pulse-line 2.4s ease-in-out infinite;
+}
+.btn-ignite-line:active::before {
+  animation: none;
+  box-shadow: 0 0 20px 5px rgba(6, 199, 85, 0.6);
+}
+@keyframes btn-ignite-pulse-line {
+  0%,
+  100% {
+    box-shadow: 0 0 10px 1px rgba(6, 199, 85, 0.5), 0 2px 0 rgba(255, 255, 255, 0.25) inset,
+      0 -3px 6px rgba(0, 0, 0, 0.4) inset;
+  }
+  50% {
+    box-shadow: 0 0 18px 4px rgba(6, 199, 85, 0.65), 0 2px 0 rgba(255, 255, 255, 0.25) inset,
+      0 -3px 6px rgba(0, 0, 0, 0.4) inset;
+  }
+}
+
+/* 2026-08 第十一輪：使用者要求桌機版頁首的「加 LINE」按鈕跟手機版浮動
+   按鈕「顏色一樣、尺寸大一點」——顏色已經靠上面的 .btn-ignite-line 共用
+   了，這裡再疊一個 .btn-ignite-lg 修飾 class 只管尺寸，把 46px 放大到
+   54px（桌機頁首空間比手機寬鬆，稍微大一點視覺上比較平衡），內圈
+   inset／圖示尺寸等比例放大。一樣用 .btn-ignite.btn-ignite-lg 雙 class
+   組合選擇器把特異度墊高，理由跟 .btn-ignite-sm 那段完全一樣：尺寸
+   屬性如果只寫 .btn-ignite-lg 單獨一個 class，特異度會跟 .btn-ignite
+   本身相同，誰生效要看編譯後的順序，不保證一定蓋得過去。 */
+.btn-ignite.btn-ignite-lg {
+  width: 54px;
+  height: 54px;
+}
+.btn-ignite.btn-ignite-lg::before {
+  inset: 9px;
+}
+.btn-ignite.btn-ignite-lg svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* 2026-08 第九輪：使用者要求首頁首圖橫幅的「放大檢視」按鈕再縮小一半
+   ——只改這一顆，不能動到 .btn-ignite 本身的尺寸（那樣會連頁首／手機
+   浮動的「加 LINE」兩顆按鈕也跟著變小），所以額外疊一個 .btn-ignite-sm
+   修飾 class，只蓋掉尺寸相關的數值，顏色/動畫時間軸原本沿用
+   .btn-ignite 不用重複定義。跟上面 .btn-ignite-line 的寫法不同的地方：
+   這裡用 .btn-ignite.btn-ignite-sm（兩個 class 都要命中）而不是單獨
+   寫 .btn-ignite-sm，是因為這幾個屬性跟 .btn-ignite 本身的規則選擇器
+   特異度（specificity）完全一樣，兩條規則寫在同一個元素上時哪個生效
+   要看誰在編譯後的 CSS 排在後面，順序不保證——用雙 class 組合選擇器把
+   特異度墊高，才能保證一定蓋得過去，不會出現「明明加了縮小 class 卻
+   沒縮小」的隨機結果（同樣的教訓見 showroom-shell.tsx 對
+   hidden/btn-ignite-wrap 那段的說明）。
+   第十輪：使用者接著說「放大檢視不要紅色、再小一半、這顆很不重要就給
+   白色吧」——三件事一起處理：(1) 24px→12px 再縮小一半；(2) 內圈從紅色
+   點火漸層改成素白色，不再用點火按鈕原本那套「吸睛」的多層深色鉻圈＋
+   呼吸發光動畫（這些效果本來就是設計來讓人注意到、按下去的，跟使用者
+   現在「這顆不重要」的定位相反），改成極簡的白色圓點＋一圈很淡的陰影，
+   安安靜靜待在照片角落就好，不用一直閃爍搶注意力；(3) 動畫拿掉
+   （animation: none），呼吸效果只留給真的要使用者採取行動的「加 LINE」
+   系列按鈕。 */
+.btn-ignite.btn-ignite-sm {
+  width: 12px;
+  height: 12px;
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.12),
+    0 2px 5px -2px rgba(0, 0, 0, 0.35);
+}
+.btn-ignite.btn-ignite-sm::before {
+  inset: 1.5px;
+  background: radial-gradient(circle at 40% 30%, #ffffff, #f0f0f0 60%, #dcdcdc 100%);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.6) inset,
+    0 -1px 2px rgba(0, 0, 0, 0.15) inset;
+  animation: none;
+}
+.btn-ignite.btn-ignite-sm:active::before {
+  animation: none;
+  box-shadow: 0 -1px 2px rgba(0, 0, 0, 0.25) inset;
+}
+.btn-ignite.btn-ignite-sm svg {
+  width: 6px;
+  height: 6px;
+}
+/* 按鈕縮小之後，底下「放大檢視」文字如果還維持原本 10px 會顯得比按鈕
+   本身還醒目、比例失衡，一起縮小成 8px，同樣用雙 class 組合選擇器
+   保證蓋得過 .ignite-label 本身。 */
+.ignite-label.ignite-label-sm {
+  font-size: 8px;
+}
+
+/* 標籤文字疊在照片上，用白字＋深色文字陰影確保不管照片明暗都看得清楚
+   （參考檔案的版本是純灰字，那是因為它疊在固定的深色頁面背景上；這裡
+   疊在使用者自己上傳、明暗不一的照片上，純灰字風險較高）。2026-08
+   第六輪：文字從英文「START」改成中文「加 LINE 專人服務」之後字數
+   變多，原本給短英文字用的 0.2em 超寬字距會把中文撐得太開，改窄成
+   0.04em，並加 white-space:nowrap 避免自動換行斷字。第七輪：整顆
+   按鈕改小（64px→46px，見上面 .btn-ignite 尺寸），字級跟著從 11px
+   縮成 10px，維持跟圓鍵的比例協調，不會看起來字比按鈕本身還醒目。 */
+.ignite-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  color: #ffffff;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.55);
+}
+@media (prefers-reduced-motion: reduce) {
+  .btn-ignite::before,
+  .btn-ignite-line::before {
+    animation: none;
+  }
 }
