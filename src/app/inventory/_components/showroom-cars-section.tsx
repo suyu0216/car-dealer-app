@@ -27,12 +27,14 @@
 // 保留 DOM／捲動位置，關掉之後列表捲動位置不會跳掉。
 import { useEffect, useState } from "react";
 import { VALID_BODY_TYPES } from "@/lib/supabase/types";
+import { formatCurrency } from "@/lib/format";
 import type { ShowroomTenant } from "@/lib/supabase/public-tenant";
 import type { ShowroomCar } from "@/lib/supabase/public-cars";
 import { ShowroomGrid } from "./showroom-grid";
 import { ShowroomDetailModal } from "./showroom-detail-modal";
 import { ShowroomShell } from "./showroom-shell";
 import { CategoryPill, lineAddFriendUrl } from "./showroom-shared";
+import { FadeImage } from "./fade-image";
 
 /** 篩選面板「價格」「里程數」的區間選項——跟 matchesPriceBucket() /
  * matchesMileageBucket() 的判斷條件一一對應，改這裡的同時要記得改那兩個
@@ -217,14 +219,27 @@ export function ShowroomCarsSection({
     !!mileageFilter,
   ].filter(Boolean).length;
 
+  // 2026-08：使用者上傳「雜誌選書」排版的參考檔案（inventoryv4magazine.html）
+  // 要求「前台改成這樣」——參考檔案最上面有一格「本月焦點車款」大幅全版
+  // 首圖。這裡沒有後台額外欄位可以指定「哪台是本月焦點」，用跟首頁「熱門
+  // 車款」同一份真實資料：優先挑第一台 is_featured（熱門推薦）的車，車行
+  // 沒標記任何一台的話退回第一台在售車輛（依 cars 傳進來的順序，通常是
+  // 最新上架）——一律是車行自己資料裡真的存在的車，不是憑空塞一台假的。
+  // 只在「沒有任何篩選、沒有從其他頁面帶著特定車輛/分類的深連結」這個
+  // 最乾淨的預設瀏覽狀態才顯示，篩選之後這格佔的版面對「快速看篩選結果」
+  // 反而是干擾，所以篩選當下就不顯示。
+  const heroCar = !hasActiveFilter && !initialCarId ? cars.find((c) => c.is_featured) ?? cars[0] ?? null : null;
+
   return (
     <>
       <div className={selectedCar || filterOpen ? "hidden" : undefined}>
         <ShowroomShell tenant={tenant} tenantId={tenantId} active="cars">
           <main className="mx-auto max-w-6xl px-6 py-10">
+            {heroCar && <FeaturedCarHero car={heroCar} onSelect={() => setSelectedId(heroCar.id)} />}
+
             <div className="flex items-center gap-4">
               <h2 className="font-showroom-display shrink-0 text-lg tracking-wide text-[#171717]">
-                現正展示車輛
+                {heroCar ? "更多車輛精選" : "現正展示車輛"}
               </h2>
               <div className="h-px flex-1 bg-[#E5E5E5]" />
               <span className="shrink-0 rounded-full bg-[#F5F5F5] px-3 py-1 text-xs font-semibold text-[#171717]">
@@ -505,6 +520,74 @@ function FilterDrawer({
         </div>
       </div>
     </>
+  );
+}
+
+/** 「本月焦點車款」全版首圖——2026-08 新增，見上面 heroCar 的說明。
+ * 樣式沿用使用者參考檔案的 .hero（大圖滿版＋底部漸層蓋文字），CTA 按鈕
+ * 用跟品牌簡介頁同一套 .btn-flow 導流曲線按鈕（曜石灰底版本），點下去
+ * 直接開這台車的詳情 Modal，不用另外導頁。 */
+function FeaturedCarHero({ car, onSelect }: { car: ShowroomCar; onSelect: () => void }) {
+  return (
+    <div className="relative mb-10 flex min-h-[300px] items-end overflow-hidden rounded-[20px] bg-[#171717] sm:min-h-[420px]">
+      {car.image_url ? (
+        <FadeImage
+          src={car.image_url}
+          alt={`${car.brand ?? ""} ${car.model_name}`}
+          className="absolute inset-0 h-full w-full"
+          imgClassName="object-cover"
+          loading="eager"
+          fetchPriority="high"
+        />
+      ) : (
+        <div className="absolute inset-0 bg-gradient-to-br from-[#171717] via-[#404040] to-[#171717]" />
+      )}
+      <div
+        className="pointer-events-none absolute inset-0"
+        style={{
+          background:
+            "linear-gradient(0deg, rgba(10,11,13,0.92) 0%, rgba(10,11,13,0.35) 55%, rgba(10,11,13,0.05) 100%)",
+        }}
+      />
+      <div className="relative z-[1] max-w-xl px-6 py-9 text-white sm:px-11 sm:py-10">
+        <div className="flex items-center gap-2 text-[11px] font-extrabold uppercase tracking-[0.24em] text-[#ff8f8f]">
+          <span className="h-px w-5 bg-[#ff8f8f]" aria-hidden />
+          {car.is_featured ? "本月焦點車款" : "現正展示"}
+        </div>
+        <h2 className="font-showroom-display mt-2.5 text-[28px] leading-tight sm:text-[42px]">
+          {car.brand ? `${car.brand} ${car.model_name}` : car.model_name}
+        </h2>
+        <p className="mt-2 text-[13.5px] text-[#d8d9db]">
+          {[car.year ? `${car.year} 年式` : null, car.color, "現車展示中"].filter(Boolean).join(" ・ ")}
+        </p>
+        <div className="mt-5 flex flex-wrap items-center gap-6">
+          <p className="font-showroom-display text-2xl tabular-nums">
+            {car.selling_price != null ? formatCurrency(car.selling_price) : "洽詢底價"}
+          </p>
+          <button type="button" onClick={onSelect} className="btn-flow btn-flow-dark px-7 pt-3.5 pb-[19px] text-sm">
+            預約賞車
+            <FlowLine stroke="#e2192f" />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** 見 showroom-home-section.tsx 的同名說明——.btn-flow 按鈕下緣那條
+ * hover 時「畫出來」的曲線，原封不動沿用參考檔案的 SVG path。 */
+function FlowLine({ stroke, opacity }: { stroke: string; opacity?: number }) {
+  return (
+    <svg className="flow-line" viewBox="0 0 160 16" preserveAspectRatio="none" aria-hidden>
+      <path
+        d="M4 8 C 45 1, 115 15, 156 5"
+        stroke={stroke}
+        strokeWidth="2.5"
+        fill="none"
+        strokeLinecap="round"
+        opacity={opacity}
+      />
+    </svg>
   );
 }
 

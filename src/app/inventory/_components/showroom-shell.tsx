@@ -255,7 +255,7 @@ export function ShowroomShell({
             }
           >
             <div className="flex items-center gap-4">
-              {tenant.logo_url && (
+              {tenant.logo_url ? (
                 // eslint-disable-next-line @next/next/no-img-element -- 見 showroom-lightbox.tsx 的說明
                 <img
                   src={tenant.logo_url}
@@ -270,6 +270,24 @@ export function ShowroomShell({
                     boxShadow: "0 0 0 3px rgba(226,25,47,0.16), 0 6px 14px -6px rgba(0,0,0,0.7)",
                   }}
                 />
+              ) : (
+                // 沒有上傳 Logo 的車行——用車行名稱第一個字當作圓徽，比
+                // 完全不顯示任何品牌標記來得有辨識度，也是使用者這次上傳的
+                // 參考檔案（jh-banner__mark）本來就有的設計。
+                <div
+                  aria-hidden
+                  className={
+                    "flex shrink-0 items-center justify-center rounded-full border font-showroom-display text-white transition-all duration-300 " +
+                    (scrolled ? "h-8 w-8 text-xs" : "h-[42px] w-[42px] text-base")
+                  }
+                  style={{
+                    borderColor: "rgba(255,255,255,0.14)",
+                    background: "radial-gradient(circle at 32% 28%, #2b2d31, #0f1012 72%)",
+                    boxShadow: "0 0 0 3px rgba(226,25,47,0.16), 0 6px 14px -6px rgba(0,0,0,0.7)",
+                  }}
+                >
+                  {tenant.name.slice(0, 1)}
+                </div>
               )}
               <div>
                 <Link
@@ -332,27 +350,18 @@ export function ShowroomShell({
                 比較平衡），圖示描邊比照手機版改成白色。 */}
             {tenant.line_id && (
               <div className="hidden sm:block">
+                {/* 2026-08：使用者上傳全新設計的頁首參考檔案，「加 LINE」
+                    CTA 換成參考檔案原本的 LINE 綠漸層膠囊（.jh-cta，見
+                    globals.css 開頭的說明），取代舊版的點火圓鍵＋文字。
+                    點火按鈕家族（.btn-ignite）繼續留給手機浮動按鈕跟首圖
+                    「放大檢視」這兩個場景，沒有被拿掉。 */}
                 <a
                   href={lineAddFriendUrl(tenant.line_id)}
                   target="_blank"
                   rel="noreferrer"
-                  aria-label="加 LINE 專人服務"
-                  className="btn-ignite-wrap shrink-0"
+                  className="jh-cta shrink-0"
                 >
-                  <span className="btn-ignite btn-ignite-line btn-ignite-lg">
-                    <svg
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="#ffffff"
-                      strokeWidth="2.2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      aria-hidden
-                    >
-                      <path d="M4 12c0-4.4 3.6-8 8-8s8 3.6 8 8-3.6 8-8 8c-1.1 0-2.1-.2-3-.6L5 21l1.3-3.9C4.8 15.7 4 14 4 12Z" />
-                    </svg>
-                  </span>
-                  <span className="ignite-label">加 LINE 專人服務</span>
+                  加 LINE 專人服務
                 </a>
               </div>
             )}
