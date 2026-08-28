@@ -74,6 +74,11 @@ export function CarTable({
                       ⭐ 熱門推薦
                     </span>
                   )}
+                  {car.is_large_card && (
+                    <span className="rounded-full bg-[#F5EEE0] px-2 py-0.5 text-[11px] font-medium text-[#A6793D]">
+                      🖼️ 大圖卡
+                    </span>
+                  )}
                   {car.body_type && (
                     <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-[11px] text-neutral-500">
                       {car.body_type}

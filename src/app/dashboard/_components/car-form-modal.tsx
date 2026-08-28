@@ -563,6 +563,25 @@ export function CarFormModal({
                 設為熱門推薦（於展間頁「熱門款」分類顯示）
               </label>
             </div>
+            <div className="flex items-end pb-2">
+              {/* 大圖卡——2026-08 新增，使用者明確要求「現有車輛」頁哪些
+                  車要用大圖廣告卡、哪些用小圖，要能自己設定，不要系統
+                  自動判斷（原本是自動挑排序第一台放大）。跟上面「熱門
+                  推薦」是各自獨立的開關，互不影響，可以同時勾選、也可以
+                  只勾其中一個。勾了這個的車輛，會在「現有車輛」頁車輛
+                  清單裡用大圖卡呈現；如果同時是這個車行第一台被勾選的
+                  車，也會顯示在頁面最上面的「焦點車款」大圖，見
+                  showroom-cars-section.tsx 的說明。 */}
+              <label className="flex items-center gap-2 text-sm text-neutral-700">
+                <input
+                  type="checkbox"
+                  name="is_large_card"
+                  defaultChecked={car?.is_large_card ?? false}
+                  className="h-4 w-4 rounded border-neutral-300 text-[#BFA074] focus:ring-[#BFA074]"
+                />
+                設為大圖卡（於「現有車輛」頁以大圖廣告卡呈現）
+              </label>
+            </div>
           </div>
 
           {state?.error && (

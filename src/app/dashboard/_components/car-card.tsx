@@ -59,6 +59,7 @@ export function CarCard({
 
         <div className="mt-1.5 flex flex-wrap gap-1.5">
           {car.is_featured && <MiniBadge>⭐ 熱門推薦</MiniBadge>}
+          {car.is_large_card && <MiniBadge>🖼️ 大圖卡</MiniBadge>}
           {car.body_type && <MiniBadge>{car.body_type}</MiniBadge>}
           {car.year && <MiniBadge>{car.year} 年式</MiniBadge>}
           {car.mileage != null && <MiniBadge>{car.mileage.toLocaleString("zh-TW")} km</MiniBadge>}
