@@ -172,6 +172,12 @@ export interface Car {
   // 假訊息」的原則一致（見 public-cars.ts 對「近期上架」標籤的說明）。
   body_type: string | null;
   is_featured: boolean;
+  // 前台「現有車輛」頁車輛清單／焦點車款首圖要不要用大圖廣告卡呈現——
+  // 後台手動開關，車行自己針對每一台車決定，不是系統自動判斷（例如
+  // 排序第一台就自動放大），也跟 is_featured（熱門推薦）是各自獨立的
+  // 兩個開關互不影響，見 showroom-grid.tsx／showroom-cars-section.tsx
+  // 對這個欄位的說明。
+  is_large_card: boolean;
   // 其他
   status: CarStatus;
   image_url: string | null;

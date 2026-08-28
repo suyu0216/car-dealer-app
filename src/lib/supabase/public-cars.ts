@@ -34,6 +34,7 @@ export type ShowroomCar = Pick<
   | "created_at"
   | "body_type"
   | "is_featured"
+  | "is_large_card"
 >;
 
 /**
@@ -57,8 +58,11 @@ export const PUBLIC_SHOWROOM_STATUSES = ["in_stock", "reserved"] as const;
 // body_type（車型分類）／is_featured（熱門推薦）給前台展間頁上方的分類
 // 選單用——is_featured 是後台手動開關的真實資料，不是系統自動判斷，
 // 跟上面「近期上架」標籤同一個原則：不寫憑空捏造的熱門/搶購假訊息。
+// is_large_card（大圖卡）——2026-08 新增，使用者要求「現有車輛」頁哪些
+// 車要用大圖廣告卡呈現要能自己設定，見 showroom-grid.tsx／
+// showroom-cars-section.tsx 對這個欄位的說明。
 const SHOWROOM_CAR_COLUMNS =
-  "id, brand, model_name, year, license_year, mileage, engine_cc, transmission, color, selling_price, image_url, created_at, body_type, is_featured";
+  "id, brand, model_name, year, license_year, mileage, engine_cc, transmission, color, selling_price, image_url, created_at, body_type, is_featured, is_large_card";
 
 /**
  * 車輛列表／詳情頁共用的查詢起點：只回傳「這個車行、公開展示、待售中或
