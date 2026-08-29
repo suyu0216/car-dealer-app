@@ -54,7 +54,18 @@ type ManualTransaction = {
 
 type StaffOption = { id: string; name: string | null };
 
-type CashPoolProfile = Pick<Profile, "id" | "role" | "can_view_cost" | "can_view_salary" | "can_edit_cars" | "tenant_id">;
+type CashPoolProfile = Pick<
+  Profile,
+  | "id"
+  | "role"
+  | "can_view_cost"
+  | "can_view_salary"
+  | "can_edit_cars"
+  | "can_view_all_salary"
+  | "can_approve_repairs"
+  | "can_manage_finance"
+  | "tenant_id"
+>;
 type CashPoolTenant = Pick<
   Tenant,
   | "cash_opening_balance"
@@ -84,6 +95,21 @@ export default function AccountingPage() {
   const [activeTab, setActiveTab] = useState<"company" | "summary" | "payroll" | "profitShare">("company");
   const [expenses, setExpenses] = useState<CompanyExpense[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // 2026-08-29：這整頁（公司開銷／資金總覽／薪資單／淨利分潤）以前完全
+  // 沒有頁面層級的權限檢查——任何登入的員工只要知道 /dashboard/accounting
+  // 這個網址，就能看到全公司的開銷跟薪資紀錄，跟「老闆／會計／店長／
+  // 員工」要分級的目標互相矛盾。現在分兩層：
+  //   - canManageFinance（老闆／會計預設 true）：四個分頁全部看得到。
+  //   - canViewSalary 但沒有 canManageFinance（一般員工/店長預設情況）：
+  //     只留「薪資單」分頁（看自己的底薪/抽成），「公司營運開銷」「資金
+  //     總覽」「淨利分潤」這三個真正屬於「會計/財務」的分頁整個隱藏，
+  //     分頁按鈕都不會出現。
+  //   - 兩者都沒有：整頁顯示「沒有權限」，不會呼叫下面任何一支查詢，
+  //     瀏覽器不會收到任何一筆薪資/開銷資料。
+  const [financeAccessChecked, setFinanceAccessChecked] = useState(false);
+  const [hasFinanceAccess, setHasFinanceAccess] = useState(false);
+  const [hasPayrollOnlyAccess, setHasPayrollOnlyAccess] = useState(false);
 
   // 「資金總覽」水池／「薪資單」都要用的額外資料——跟這個頁面原本查
   // company_expenses 同一套「client 端直接查、靠 RLS 自動限定自己車行」
@@ -129,14 +155,27 @@ export default function AccountingPage() {
     const {
       data: { user },
     } = await supabase.auth.getUser();
-    if (!user) return;
+    if (!user) return false;
 
     const { data: profileData } = await supabase
       .from("profiles")
-      .select("id, tenant_id, role, can_view_cost, can_view_salary, can_edit_cars")
+      .select(
+        "id, tenant_id, role, can_view_cost, can_view_salary, can_edit_cars, can_view_all_salary, can_approve_repairs, can_manage_finance"
+      )
       .eq("id", user.id)
       .single();
     if (profileData) setCashPoolProfile(profileData as CashPoolProfile);
+
+    const effective = profileData ? getEffectivePermissions(profileData as CashPoolProfile) : null;
+    const allowed = !!effective?.canManageFinance;
+    const payrollOnly = !allowed && !!effective?.canViewSalary;
+    setHasFinanceAccess(allowed);
+    setHasPayrollOnlyAccess(payrollOnly);
+    setFinanceAccessChecked(true);
+    if (!allowed && !payrollOnly) return false;
+    // payrollOnly 的話把分頁鎖定在「薪資單」，不讓網址列 hack 或殘留的
+    // activeTab 狀態切到其他三個分頁——那三個分頁的按鈕下面也不會渲染。
+    if (payrollOnly) setActiveTab("payroll");
 
     if (profileData?.tenant_id) {
       const { data: tenantData } = await supabase
@@ -167,12 +206,26 @@ export default function AccountingPage() {
     if (dealsData) setPayrollDeals(dealsData as PayrollDeal[]);
     if (txData) setManualTransactions(txData as ManualTransaction[]);
     if (staffData) setStaffList(staffData as StaffOption[]);
+    return true;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
-    fetchExpenses();
-    fetchSharedData();
+    // 先確認權限，通過才繼續查公司開銷（company_expenses 裡含「人事薪資」
+    // 這種敏感資料）——沒有權限的話 fetchExpenses() 根本不會被呼叫，見上面
+    // fetchSharedData() 的說明。
+    (async () => {
+      const proceed = await fetchSharedData();
+      if (proceed) {
+        // canViewSalary-only（非 canManageFinance）的人也需要這筆資料——
+        // 「薪資單」分頁要從這裡面篩出屬於自己的「人事薪資」項目，見
+        // payroll-module.tsx。真正被擋下來的是上面 render 那三個分頁
+        // （公司開銷／資金總覽／淨利分潤）跟分頁按鈕本身，不是這支查詢。
+        fetchExpenses();
+      } else {
+        setLoading(false);
+      }
+    })();
   }, [fetchSharedData]);
 
   // 新增開銷
@@ -217,6 +270,24 @@ export default function AccountingPage() {
   const totalCompanyExpenses = expenses.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
   const staffNameById = new Map(staffList.map((s) => [s.id, s.name ?? "未命名"]));
 
+  if (!financeAccessChecked) {
+    return <p className="p-6 text-center text-sm text-neutral-400">載入中...</p>;
+  }
+
+  if (!hasFinanceAccess && !hasPayrollOnlyAccess) {
+    return (
+      <div className="mx-auto flex min-h-[60vh] max-w-md flex-col items-center justify-center px-6 text-center">
+        <p className="text-3xl" aria-hidden>
+          🔒
+        </p>
+        <h1 className="mt-3 text-lg font-semibold text-neutral-900">沒有權限使用這個頁面</h1>
+        <p className="mt-2 text-sm text-neutral-500">
+          「會計與財務管理」只開放給老闆、會計，或有開啟「檢視個人薪水報表」權限的員工（只能看自己的薪資單），如果你需要使用，請洽車行管理員在「帳號與權限管理」開啟對應權限。
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto max-w-7xl p-6">
       {/* 頁面標頭 */}
@@ -227,28 +298,35 @@ export default function AccountingPage() {
         </div>
       </div>
 
-      {/* 分頁 Tab 切換 */}
+      {/* 分頁 Tab 切換——公司開銷／資金總覽／淨利分潤這三個真正的「會計/
+          財務」分頁，只有 hasFinanceAccess（老闆/會計）才看得到按鈕；
+          只有 canViewSalary（hasPayrollOnlyAccess）的員工/店長只會看到
+          「薪資單」一個分頁，其餘三個按鈕整個不渲染。 */}
       <div className="mb-6 flex border-b border-neutral-200">
-        <button
-          onClick={() => setActiveTab("company")}
-          className={`px-5 py-3 font-semibold text-sm transition border-b-2 ${
-            activeTab === "company"
-              ? "border-blue-600 text-blue-600"
-              : "border-transparent text-neutral-500 hover:text-neutral-700"
-          }`}
-        >
-          🏢 公司營運開銷 (水電/租金/雜項)
-        </button>
-        <button
-          onClick={() => setActiveTab("summary")}
-          className={`px-5 py-3 font-semibold text-sm transition border-b-2 ${
-            activeTab === "summary"
-              ? "border-blue-600 text-blue-600"
-              : "border-transparent text-neutral-500 hover:text-neutral-700"
-          }`}
-        >
-          💰 資金總覽（現金／銀行水位）
-        </button>
+        {hasFinanceAccess && (
+          <button
+            onClick={() => setActiveTab("company")}
+            className={`px-5 py-3 font-semibold text-sm transition border-b-2 ${
+              activeTab === "company"
+                ? "border-blue-600 text-blue-600"
+                : "border-transparent text-neutral-500 hover:text-neutral-700"
+            }`}
+          >
+            🏢 公司營運開銷 (水電/租金/雜項)
+          </button>
+        )}
+        {hasFinanceAccess && (
+          <button
+            onClick={() => setActiveTab("summary")}
+            className={`px-5 py-3 font-semibold text-sm transition border-b-2 ${
+              activeTab === "summary"
+                ? "border-blue-600 text-blue-600"
+                : "border-transparent text-neutral-500 hover:text-neutral-700"
+            }`}
+          >
+            💰 資金總覽（現金／銀行水位）
+          </button>
+        )}
         <button
           onClick={() => setActiveTab("payroll")}
           className={`px-5 py-3 font-semibold text-sm transition border-b-2 ${
@@ -259,23 +337,27 @@ export default function AccountingPage() {
         >
           🧾 薪資單
         </button>
-        {/* 「淨利／分潤試算」預設關閉，但分頁按鈕本身一律顯示——沒開啟時
-            點進去會看到啟用引導畫面（見 ProfitShareModule），不是直接
-            把分頁藏起來，管理員才找得到「原來這裡可以開」。 */}
-        <button
-          onClick={() => setActiveTab("profitShare")}
-          className={`px-5 py-3 font-semibold text-sm transition border-b-2 ${
-            activeTab === "profitShare"
-              ? "border-blue-600 text-blue-600"
-              : "border-transparent text-neutral-500 hover:text-neutral-700"
-          }`}
-        >
-          🧮 淨利／分潤試算
-        </button>
+        {/* 「淨利／分潤試算」預設關閉，但分頁按鈕本身（給有權限的人）一律
+            顯示——沒開啟時點進去會看到啟用引導畫面（見 ProfitShareModule），
+            不是直接把分頁藏起來，管理員才找得到「原來這裡可以開」。 */}
+        {hasFinanceAccess && (
+          <button
+            onClick={() => setActiveTab("profitShare")}
+            className={`px-5 py-3 font-semibold text-sm transition border-b-2 ${
+              activeTab === "profitShare"
+                ? "border-blue-600 text-blue-600"
+                : "border-transparent text-neutral-500 hover:text-neutral-700"
+            }`}
+          >
+            🧮 淨利／分潤試算
+          </button>
+        )}
       </div>
 
-      {/* 分支 1：公司營運開銷 */}
-      {activeTab === "company" && (
+      {/* 分支 1：公司營運開銷——多一層 hasFinanceAccess 防線，不只靠上面
+          按鈕不渲染，避免 activeTab 狀態萬一在某個時間點還沒切回
+          payroll 就先渲染出一瞬間的公司開銷內容。 */}
+      {hasFinanceAccess && activeTab === "company" && (
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
           {/* 左側：新增開銷表單 */}
           <div className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
@@ -473,10 +555,13 @@ export default function AccountingPage() {
       )}
 
       {/* 分支 2：資金總覽（現金／銀行水池） */}
-      {activeTab === "summary" && (
+      {hasFinanceAccess && activeTab === "summary" && (
         <CashPoolModule
           tenant={cashPoolTenant}
-          isTenantAdmin={cashPoolProfile?.role === "tenant_admin"}
+          // 「能編輯起算點設定」的資格，2026-08-29 起從「只有老闆」放寬成
+          // 「老闆或有 canManageFinance 的會計」——名稱維持 isTenantAdmin
+          // 沒有改，語意上等同「這個財務頁面的管理者」。
+          isTenantAdmin={!!cashPoolProfile && getEffectivePermissions(cashPoolProfile).canManageFinance}
           canViewCost={!!cashPoolProfile && getEffectivePermissions(cashPoolProfile).canViewCost}
           deals={payrollDeals}
           cars={cashPoolCars}
@@ -499,7 +584,14 @@ export default function AccountingPage() {
           deals={payrollDeals}
           cars={cashPoolCars}
           expenses={expenses}
-          canManageStaff={!!cashPoolProfile && getEffectivePermissions(cashPoolProfile).canManageStaff}
+          // 「看得到全部人的薪資單」現在不是只有老闆——會計預設也看得到
+          // （canViewAllSalary），店長/員工預設看不到、只看自己的，見
+          // src/lib/permissions.ts 的 ROLE_DEFAULT_PERMISSIONS。
+          canManageStaff={
+            !!cashPoolProfile &&
+            (getEffectivePermissions(cashPoolProfile).canManageStaff ||
+              getEffectivePermissions(cashPoolProfile).canViewAllSalary)
+          }
           canViewSalary={!!cashPoolProfile && getEffectivePermissions(cashPoolProfile).canViewSalary}
           currentUserId={cashPoolProfile?.id ?? null}
         />
@@ -507,12 +599,12 @@ export default function AccountingPage() {
 
       {/* 分支 4：淨利／分潤試算——只給有股東/合夥人分潤安排的車行用，
           預設關閉，見 profit-share-module.tsx 開頭的說明。 */}
-      {activeTab === "profitShare" && cashPoolTenant && (
+      {hasFinanceAccess && activeTab === "profitShare" && cashPoolTenant && (
         <ProfitShareModule
           tenant={cashPoolTenant}
           cars={cashPoolCars}
           expenses={expenses}
-          isTenantAdmin={cashPoolProfile?.role === "tenant_admin"}
+          isTenantAdmin={!!cashPoolProfile && getEffectivePermissions(cashPoolProfile).canManageFinance}
           canViewFinancials={
             !!cashPoolProfile &&
             getEffectivePermissions(cashPoolProfile).canViewCost &&
