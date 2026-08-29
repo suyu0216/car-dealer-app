@@ -48,9 +48,10 @@ export function AnalyticsModule({
   const inventoryCount = inventoryCars.length;
   const inventoryAssetCost = inventoryCars.reduce((sum, c) => sum + liveTotalCost(c), 0);
   const inventorySpentPrepCost = inventoryCars.reduce((sum, c) => sum + livePrepCost(c), 0);
-  const inventoryEstimatedMargin = inventoryCars
-    .filter((c) => c.selling_price != null)
-    .reduce((sum, c) => sum + (Number(c.selling_price) - liveTotalCost(c)), 0);
+  // 2026-08-29：「場內預估毛利」這張卡片依使用者要求拿掉——車輛都還沒賣出
+  // 就先估一個「假設現在開價全部賣掉」的毛利數字，容易被誤讀成已經確定
+  // 能賺到的錢，跟下面卡片二「已實現總毛利/淨利」（只算真的結帳賣出的
+  // 車輛）放在同一個看板上反而容易混淆，所以移除，不再計算這個估算值。
 
   // ---------------------------------------------------------------------
   // 卡片二：本月已結案銷售績效 —— 只看「已結帳」的車輛（closed_at 非
@@ -135,15 +136,10 @@ export function AnalyticsModule({
         <p className="mt-0.5 text-xs text-neutral-400">
           僅統計待售中／整備中／已預訂的車輛，即時計算
         </p>
-        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
           <Stat label="場內台數" value={`${inventoryCount} 輛`} />
           <Stat label="場內在庫總資產" value={formatCurrency(inventoryAssetCost)} />
           <Stat label="已花整備費" value={formatCurrency(inventorySpentPrepCost)} />
-          <Stat
-            label="場內預估毛利"
-            value={formatCurrency(inventoryEstimatedMargin)}
-            tone={inventoryEstimatedMargin >= 0 ? "positive" : "negative"}
-          />
         </div>
       </div>
 

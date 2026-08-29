@@ -47,6 +47,7 @@ const PERMISSION_FIELDS: {
   { key: "can_view_all_salary", label: "檢視全體薪資（不只自己）" },
   { key: "can_approve_repairs", label: "審核維修/請款" },
   { key: "can_manage_finance", label: "管理財務（公司開銷/資金總覽/分潤）" },
+  { key: "can_view_analytics", label: "檢視車行經營數據看板" },
 ];
 
 const INPUT_CLASS =
@@ -140,6 +141,7 @@ const EMPTY_PERMISSIONS: StaffPermissionFlags = {
   can_view_all_salary: false,
   can_approve_repairs: false,
   can_manage_finance: false,
+  can_view_analytics: false,
 };
 
 /** 邀請新員工——輸入 Email + 指定角色/權限，系統寄邀請信，員工自己點連結
@@ -334,6 +336,7 @@ function StaffRow({
       can_view_all_salary: !!staff.can_view_all_salary,
       can_approve_repairs: !!staff.can_approve_repairs,
       can_manage_finance: !!staff.can_manage_finance,
+      can_view_analytics: !!staff.can_view_analytics,
       [key]: !staff[key],
     };
     const prev = { ...staff };

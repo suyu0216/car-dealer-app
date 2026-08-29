@@ -132,7 +132,10 @@ export function DashboardShell({
     "tradeIns",
     "deals",
     "commission",
-    ...(permissions.canViewCost ? (["analytics"] as ModuleKey[]) : []),
+    // 2026-08-29：「車行經營數據看板」原本跟 canViewCost 綁在一起，現在
+    // 拆成獨立的 canViewAnalytics 權限，兩者可以分開勾選（見
+    // src/lib/permissions.ts 的說明）。
+    ...(permissions.canViewAnalytics ? (["analytics"] as ModuleKey[]) : []),
     ...(permissions.canManageStaff ? (["branding", "settings"] as ModuleKey[]) : []),
     // 「我的公開聯繫方式」是改自己的資料，不是管理功能，所有角色都看得到，
     // 不用 canManageStaff 擋——見 my-contact-module.tsx 開頭的說明。
@@ -190,7 +193,7 @@ export function DashboardShell({
             canViewSalary={permissions.canViewSalary}
           />
         )}
-        {activeModule === "analytics" && permissions.canViewCost && (
+        {activeModule === "analytics" && permissions.canViewAnalytics && (
           <AnalyticsModule cars={cars} repairItems={repairItems} deals={deals} staff={staff} />
         )}
         {activeModule === "branding" && permissions.canManageStaff && tenant && (
