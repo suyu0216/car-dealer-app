@@ -642,10 +642,19 @@ begin
     end if;
 
     if public.current_role_name() = 'tenant_admin'
-       and old.tenant_id = public.current_tenant_id()
-       and (new.tenant_id = old.tenant_id or new.tenant_id is null)
        and new.id <> auth.uid()
        and new.role = any (array['tenant_admin', 'staff'])
+       and (
+         -- 原本的方向：本來就在自己車行的人，改權限、改角色，或移出
+         -- （tenant_id 變成 null）。
+         (old.tenant_id = public.current_tenant_id() and (new.tenant_id = old.tenant_id or new.tenant_id is null))
+         -- 2026-08 新增的方向：一個目前沒有車行（tenant_id is null）的
+         -- 舊帳號，被接回自己車行——restore_staff_to_tenant() 專用（見
+         -- 下方說明），那支函式自己會先確認這個人「上次就是被自己車行
+         -- 移出的」才會走到這個 UPDATE，這裡不重複判斷，只負責放行這個
+         -- transition 本身不再被這道防線多餘擋下來。
+         or (old.tenant_id is null and new.tenant_id = public.current_tenant_id())
+       )
     then
       return new;
     end if;
@@ -695,8 +704,12 @@ begin
 
   v_caller_tenant := public.current_tenant_id();
 
+  -- removed_from_tenant_id：記下是被哪間車行移出的，讓同一間車行之後
+  -- 可以用 restore_staff_to_tenant()（見下方）把人接回來，見該函式上方
+  -- 的完整說明。
   update public.profiles
     set tenant_id = null,
+        removed_from_tenant_id = v_caller_tenant,
         can_view_cost = false,
         can_view_salary = false,
         can_edit_cars = false
@@ -710,6 +723,91 @@ end;
 $$;
 
 grant execute on function public.remove_staff_from_tenant(uuid) to authenticated;
+
+-- 2026-08：「重新邀請剛移出的員工」——移出本車行只是把 tenant_id 設回
+-- null，這個帳號在 auth.users 裡本來就還在（Email、密碼都還在），並不是
+-- 真的刪除。這代表如果車行管理員之後想把同一個人加回來，直接照舊流程
+-- 呼叫 Supabase 的 inviteUserByEmail() 一定會被 Supabase 擋下來（回傳
+-- 「這個 Email 已經有帳號了」），因為帳號真的還在、不需要也不能重新
+-- 「建立」一次。以前這裡完全沒有處理這個情境，車行管理員自己按過一次
+-- 「移出本車行」之後想反悔加回來，就會直接卡死在這個錯誤訊息，只能請
+-- 開發者手動到後台資料庫改（第一次踩到這個問題就是這樣手動修的）。
+--
+-- 記錄「這個帳號上一次是被哪個車行移出的」（removed_from_tenant_id），
+-- 讓同一間車行之後想重新邀請「同一個」被自己移出過的人時，可以在
+-- inviteStaffMember()（見 src/app/dashboard/staff-actions.ts）寄出邀請信
+-- 之前，先呼叫下面的 restore_staff_to_tenant()，直接把他接回來、套用
+-- 這次表單填的角色/權限，完全不會、也不需要走 Supabase 邀請信那一段
+-- （他本來就有密碼，不需要重設）。
+--
+-- 只記「最後一次是被誰移出的」這一筆，不記錄「歷史上曾經待過哪些車行」
+-- 的完整名單，接回去之後就清空——避免有心人拿別間車行「用過」的員工
+-- Email 亂猜、亂邀請，只有「剛好是同一間車行」才能把人接回來，其餘情況
+-- （全新 Email、或這個 Email 目前屬於其他車行/其他狀況）一律維持原本
+-- 「已經有帳號了，無法重複邀請」的擋法，不能讓任何車行都能撿走別的車行
+-- 的舊員工帳號。
+alter table public.profiles add column if not exists removed_from_tenant_id uuid references public.tenants (id) on delete set null;
+
+comment on column public.profiles.removed_from_tenant_id is
+  '此帳號上一次被移出的車行 id（tenant_id 被設回 null 時記錄），只有同一間車行重新邀請同一個 Email 才能直接接回來；成功接回後清空。與「目前所屬車行」tenant_id 無關，tenant_id 有值時這欄應為 null。';
+
+-- remove_staff_from_tenant() 移出時順便記錄是被哪間車行移出的（上面的
+-- 函式定義已經是最新版，這裡不重複貼一次完整定義；只在此處註明這個
+-- 欄位是從這個函式的哪個時間點開始被寫入的）。
+
+create or replace function public.restore_staff_to_tenant(
+  p_email text,
+  p_role text,
+  p_can_view_cost boolean default false,
+  p_can_view_salary boolean default false,
+  p_can_edit_cars boolean default false
+)
+returns table(id uuid, name text)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_caller_tenant uuid;
+  v_target_id uuid;
+  v_target_name text;
+begin
+  if public.current_role_name() <> 'tenant_admin' then
+    raise exception '沒有權限執行這項操作，請聯繫車行管理員。' using errcode = '42501';
+  end if;
+
+  if p_role not in ('tenant_admin', 'staff') then
+    raise exception '角色不正確。' using errcode = '22023';
+  end if;
+
+  v_caller_tenant := public.current_tenant_id();
+
+  select p.id, p.name into v_target_id, v_target_name
+  from public.profiles p
+  join auth.users u on u.id = p.id
+  where lower(u.email) = lower(trim(p_email))
+    and p.tenant_id is null
+    and p.removed_from_tenant_id = v_caller_tenant
+  limit 1;
+
+  if v_target_id is null then
+    return;
+  end if;
+
+  update public.profiles as p
+    set tenant_id = v_caller_tenant,
+        role = p_role,
+        can_view_cost = p_can_view_cost,
+        can_view_salary = p_can_view_salary,
+        can_edit_cars = p_can_edit_cars,
+        removed_from_tenant_id = null
+    where p.id = v_target_id;
+
+  return query select v_target_id, v_target_name;
+end;
+$$;
+
+grant execute on function public.restore_staff_to_tenant(text, text, boolean, boolean, boolean) to authenticated;
 
 -- -----------------------------------------------------------------------------
 -- cars policies
