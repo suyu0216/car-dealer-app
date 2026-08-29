@@ -134,6 +134,14 @@ alter table public.profiles add column if not exists can_view_all_salary boolean
 alter table public.profiles add column if not exists can_approve_repairs boolean not null default false;
 alter table public.profiles add column if not exists can_manage_finance  boolean not null default false;
 
+-- 2026-08-29 再新增一個獨立開關：can_view_analytics（可以檢視「車行經營
+-- 數據看板」）。這個功能原本是跟 can_view_cost 綁在一起的（看得到成本
+-- 就自動看得到看板），使用者反映這樣沒辦法分開控制——例如想讓某人看得到
+-- 成本但不想給他看整體經營數據，或反過來——所以拆成獨立欄位，預設
+-- false（老闆/店長/會計角色預設打開，見 permissions.ts 的
+-- ROLE_DEFAULT_PERMISSIONS）。
+alter table public.profiles add column if not exists can_view_analytics boolean not null default false;
+
 -- -----------------------------------------------------------------------------
 -- 3. cars（車輛 / 進銷存主體）
 -- -----------------------------------------------------------------------------
@@ -656,6 +664,7 @@ begin
      or (new.can_view_all_salary is distinct from old.can_view_all_salary)
      or (new.can_approve_repairs is distinct from old.can_approve_repairs)
      or (new.can_manage_finance is distinct from old.can_manage_finance)
+     or (new.can_view_analytics is distinct from old.can_view_analytics)
   then
     if public.is_super_admin() then
       return new;
@@ -735,7 +744,8 @@ begin
         can_edit_cars = false,
         can_view_all_salary = false,
         can_approve_repairs = false,
-        can_manage_finance = false
+        can_manage_finance = false,
+        can_view_analytics = false
     where id = target_id
       and tenant_id = v_caller_tenant;
 
@@ -778,9 +788,13 @@ comment on column public.profiles.removed_from_tenant_id is
 -- 函式定義已經是最新版，這裡不重複貼一次完整定義；只在此處註明這個
 -- 欄位是從這個函式的哪個時間點開始被寫入的）。
 
--- 2026-08-29：簽名從 5 個 boolean 參數擴充成 8 個（多了三個新權限開關），
--- 先 drop 掉舊版避免留下重複的 overload。
+-- 2026-08-29：簽名從 5 個 boolean 參數先擴充成 8 個（多了三個新權限
+-- 開關），後來又再擴充成 9 個（多了 can_view_analytics），每次都要先
+-- drop 掉舊版，避免留下重複的 overload。
 drop function if exists public.restore_staff_to_tenant(text, text, boolean, boolean, boolean);
+drop function if exists public.restore_staff_to_tenant(
+  text, text, boolean, boolean, boolean, boolean, boolean, boolean
+);
 
 create or replace function public.restore_staff_to_tenant(
   p_email text,
@@ -790,7 +804,8 @@ create or replace function public.restore_staff_to_tenant(
   p_can_edit_cars boolean default false,
   p_can_view_all_salary boolean default false,
   p_can_approve_repairs boolean default false,
-  p_can_manage_finance boolean default false
+  p_can_manage_finance boolean default false,
+  p_can_view_analytics boolean default false
 )
 returns table(id uuid, name text)
 language plpgsql
@@ -833,6 +848,7 @@ begin
         can_view_all_salary = p_can_view_all_salary,
         can_approve_repairs = p_can_approve_repairs,
         can_manage_finance = p_can_manage_finance,
+        can_view_analytics = p_can_view_analytics,
         removed_from_tenant_id = null
     where p.id = v_target_id;
 
@@ -840,7 +856,7 @@ begin
 end;
 $$;
 
-grant execute on function public.restore_staff_to_tenant(text, text, boolean, boolean, boolean, boolean, boolean, boolean) to authenticated;
+grant execute on function public.restore_staff_to_tenant(text, text, boolean, boolean, boolean, boolean, boolean, boolean, boolean) to authenticated;
 
 -- -----------------------------------------------------------------------------
 -- cars policies
