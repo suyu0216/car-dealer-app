@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useEffect, useState, useTransition } from "react";
-import type { Car, RepairItem, RepairItemCategory, RepairItemStatus, Role } from "@/lib/supabase/types";
+import type { Car, RepairItem, RepairItemCategory, RepairItemStatus } from "@/lib/supabase/types";
 import { formatCurrency, formatDate } from "@/lib/format";
 import {
   createRepairItem,
@@ -37,14 +37,17 @@ function totalCost(car: Car, approvedPrepCost: number) {
 export function CarMaintenanceTab({
   car,
   repairItems,
-  role,
+  canReview,
   canViewCost,
   receiptUrls,
   staff,
 }: {
   car: Car;
   repairItems: RepairItem[];
-  role: Role;
+  /** 是否能核准/退回這輛車底下的維修請款——2026-08-29 起改用
+   * canApproveRepairs 權限開關判斷（老闆恆為 true，會計預設也是），不再
+   * 只認「是不是老闆」，見 src/lib/permissions.ts。 */
+  canReview: boolean;
   /** 車輛財務損益卡（收購價/總成本/毛利）算敏感財務資訊，沒權限就整卡遮罩；
    * 底下的維修請款紀錄本身（金額、審核狀態）仍然照舊顯示——那是業務日常
    * 要送出/追蹤的請款流程，不是「進貨成本／總利潤」。 */
@@ -55,8 +58,6 @@ export function CarMaintenanceTab({
    * 自動出現在這裡，不用再手動打字。 */
   staff: { id: string; name: string | null }[];
 }) {
-  const canReview = role === "tenant_admin";
-
   // 車輛售出即結帳：car.closed_at 非 null 代表已經在售出當下把維修整備費
   // 封存過（見 cars-actions.ts 的 computeClosingFields()），這裡就顯示
   // 封存當時的數字，不再即時重新加總 repair_items —— 不然之後又核准了

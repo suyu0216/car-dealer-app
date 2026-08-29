@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import type { Car, Customer, Deal, RepairItem, Role, Tenant, TenantVideo, TradeInRequest } from "@/lib/supabase/types";
+import type { Car, Customer, Deal, RepairItem, Tenant, TenantVideo, TradeInRequest } from "@/lib/supabase/types";
 import type { EffectivePermissions } from "@/lib/permissions";
 import { CarsManager } from "./cars-manager";
 import { MaintenanceModule } from "./maintenance-module";
@@ -53,7 +53,6 @@ export function DashboardShell({
   staffAccounts,
   currentUserId,
   receiptUrls,
-  role,
   permissions,
   tenant,
   tenantName,
@@ -69,7 +68,6 @@ export function DashboardShell({
   staffAccounts: StaffAccount[];
   currentUserId: string;
   receiptUrls: Record<string, string>;
-  role: Role;
   permissions: EffectivePermissions;
   /** 車行完整資料，給「品牌設定」分頁編輯用。 */
   tenant: Tenant | null;
@@ -153,7 +151,6 @@ export function DashboardShell({
             cars={cars}
             repairItems={repairItems}
             receiptUrls={receiptUrls}
-            role={role}
             permissions={permissions}
             tenantName={tenantName}
             staff={staff}
@@ -163,7 +160,7 @@ export function DashboardShell({
           <MaintenanceModule
             repairItems={repairItems}
             cars={cars}
-            role={role}
+            canReview={permissions.canApproveRepairs}
             receiptUrls={receiptUrls}
             staff={staff}
           />
@@ -186,7 +183,10 @@ export function DashboardShell({
             cars={cars}
             staff={staff}
             currentUserId={currentUserId}
-            canManageStaff={permissions.canManageStaff}
+            // 「看得到全部」現在不是只有老闆（canManageStaff）——會計預設也
+            // 看得到全體薪資（canViewAllSalary），店長/員工則預設不行，見
+            // src/lib/permissions.ts 的 ROLE_DEFAULT_PERMISSIONS。
+            canManageStaff={permissions.canManageStaff || permissions.canViewAllSalary}
             canViewSalary={permissions.canViewSalary}
           />
         )}

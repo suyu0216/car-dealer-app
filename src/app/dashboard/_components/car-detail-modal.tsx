@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import type { Car, RepairItem, RepairItemCategory, Role } from "@/lib/supabase/types";
+import type { Car, RepairItem, RepairItemCategory } from "@/lib/supabase/types";
 import { formatCurrency, formatDate, formatNumber } from "@/lib/format";
 import { CarStatusBadge, STATUS_LABEL, STATUS_OPTIONS } from "./car-status-badge";
 import { CarAgingBadge } from "./car-aging-badge";
@@ -18,7 +18,7 @@ const QUICK_ACTION_LABEL: Record<Car["status"], string> = {
 
 export function CarDetailModal({
   car,
-  role,
+  canReview,
   canViewCost,
   canEditCars,
   tenantName,
@@ -29,7 +29,10 @@ export function CarDetailModal({
   onEdit,
 }: {
   car: Car;
-  role: Role;
+  /** 是否能核准/退回維修請款——見 car-maintenance-tab.tsx 的
+   * CarMaintenanceTab，2026-08-29 起改用 canApproveRepairs 權限開關判斷，
+   * 不再是只認「是不是老闆」的 role === "tenant_admin"。 */
+  canReview: boolean;
   /** 收購進價/過戶費/整理美容/整備維修/底價/最終成交價都算敏感成本資訊。 */
   canViewCost: boolean;
   canEditCars: boolean;
@@ -217,7 +220,7 @@ export function CarDetailModal({
             <CarMaintenanceTab
               car={car}
               repairItems={repairItems}
-              role={role}
+              canReview={canReview}
               canViewCost={canViewCost}
               receiptUrls={receiptUrls}
               staff={staff}

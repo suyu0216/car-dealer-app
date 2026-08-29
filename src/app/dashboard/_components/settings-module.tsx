@@ -8,25 +8,36 @@ import {
   updateStaffPermissions,
   updateStaffRole,
   type InviteStaffState,
+  type StaffPermissionFlags,
 } from "../staff-actions";
+import { ROLE_DEFAULT_PERMISSIONS, ROLE_LABELS } from "@/lib/permissions";
 import type { Role } from "@/lib/supabase/types";
 
 export type StaffAccount = {
   id: string;
   name: string | null;
   role: string;
-  can_view_cost?: boolean;
-  can_view_salary?: boolean;
-  can_edit_cars?: boolean;
-};
+} & Partial<StaffPermissionFlags>;
+
+/** 帳號與權限管理頁可指派的四個角色，跟 staff-actions.ts 的
+ * MANAGEABLE_ROLES 一致（super_admin 不會出現在這個列表）。 */
+const ASSIGNABLE_ROLES: Extract<Role, "tenant_admin" | "manager" | "accountant" | "staff">[] = [
+  "tenant_admin",
+  "manager",
+  "accountant",
+  "staff",
+];
 
 const PERMISSION_FIELDS: {
-  key: "can_view_cost" | "can_view_salary" | "can_edit_cars";
+  key: keyof StaffPermissionFlags;
   label: string;
 }[] = [
   { key: "can_view_cost", label: "檢視成本與底價" },
-  { key: "can_view_salary", label: "檢視業務薪資" },
   { key: "can_edit_cars", label: "編輯車輛資料" },
+  { key: "can_view_salary", label: "檢視自己的薪資" },
+  { key: "can_view_all_salary", label: "檢視全體薪資（不只自己）" },
+  { key: "can_approve_repairs", label: "審核維修/請款" },
+  { key: "can_manage_finance", label: "管理財務（公司開銷/資金總覽/分潤）" },
 ];
 
 const INPUT_CLASS =
@@ -60,24 +71,6 @@ export function SettingsModule({
     setDeletingId(staff.id);
 
     try {
-      // 2026-08 修正：這裡原本直接對 profiles 下 .update({ tenant_id: null, ... })，
-      // 不管哪個車行的管理員操作都一定會失敗。根本原因分兩層：
-      // 1) RLS policy／trigger 原本都要求「改完之後 tenant_id 還是要等於
-      //    管理員自己的 tenant_id」，這跟「移出本車行＝把 tenant_id 改成
-      //    null」互相矛盾（這兩層都已經直接在資料庫修好）。
-      // 2) 更深層的原因：就算 1) 修好了，PostgreSQL 對 UPDATE 的 RLS
-      //    還有一條內建規則——「改完之後的新資料列，必須還能通過資料表上
-      //    其他 SELECT policy 的檢查」，否則照樣擋下來。但「移出本車行」
-      //    的目的正是讓這筆資料在任何 SELECT policy 底下都不再可見（不屬於
-      //    任何車行），這條內建規則跟這個操作的本質互相矛盾，沒辦法單靠
-      //    調整 RLS policy 解決，又不能為了繞過它而放寬 SELECT
-      //    policy——那樣會變成任何車行的管理員都能查到「全平台」被移出過
-      //    的員工名單，造成跨車行資料外洩。
-      // 改成呼叫資料庫裡一個專門的 SECURITY DEFINER 函式
-      // （remove_staff_from_tenant，見 supabase_schema.sql）——函式內部
-      // 不受呼叫者的 RLS 限制，改成在函式自己的程式邏輯裡明確檢查權限
-      // （必須是 tenant_admin、不能對自己動手、目標必須屬於自己車行），
-      // 檢查嚴謹程度不輸 RLS，只是用程式碼明確表達。
       const { error } = await supabase.rpc("remove_staff_from_tenant", {
         target_id: staff.id,
       });
@@ -106,7 +99,7 @@ export function SettingsModule({
         <div className="border-b border-neutral-100 pb-4">
           <h2 className="text-lg font-bold text-neutral-900">帳號與權限管理</h2>
           <p className="mt-1 text-xs text-neutral-500">
-            可以調整每位員工的角色跟權限；若有非本車行的管理者或離職員工，請點選「移出本車行」解除連結。
+            可以調整每位員工的角色跟權限——角色（老闆／店長／會計／員工）決定切換當下的預設權限組合，切換完之後仍然可以針對這個人再個別微調下面的權限開關。若有非本車行的管理者或離職員工，請點選「移出本車行」解除連結。
           </p>
         </div>
 
@@ -131,19 +124,43 @@ export function SettingsModule({
 
 const inviteInitialState: InviteStaffState = {};
 
+const EMPTY_PERMISSIONS: StaffPermissionFlags = {
+  can_view_cost: false,
+  can_view_salary: false,
+  can_edit_cars: false,
+  can_view_all_salary: false,
+  can_approve_repairs: false,
+  can_manage_finance: false,
+};
+
 /** 邀請新員工——輸入 Email + 指定角色/權限，系統寄邀請信，員工自己點連結
  * 設定密碼。公開的 /login 只給老闆自助註冊（會自動開一間新車行），員工
- * 一律要從這裡邀請才能拿到帳號，不能自己跑去 /login 註冊進來。 */
+ * 一律要從這裡邀請才能拿到帳號，不能自己跑去 /login 註冊進來。
+ *
+ * 2026-08-29：角色下拉選單改成四選一（老闆/店長/會計/員工），選了角色
+ * 之後下面六個權限勾選框會自動套用該角色的預設組合（見
+ * ROLE_DEFAULT_PERMISSIONS），管理員在送出前仍然可以自己再調整勾選框，
+ * 送出時實際帶的是勾選框當下的狀態，不是角色本身。
+ */
 function InviteStaffForm() {
   const [open, setOpen] = useState(false);
   const [resetKey, setResetKey] = useState(0);
   const [state, formAction, pending] = useActionState(inviteStaffMember, inviteInitialState);
+  const [role, setRole] = useState<Role>("staff");
+  const [permissions, setPermissions] = useState<StaffPermissionFlags>(ROLE_DEFAULT_PERMISSIONS.staff);
 
   useEffect(() => {
     if (state?.success) {
       setResetKey((k) => k + 1);
+      setRole("staff");
+      setPermissions(ROLE_DEFAULT_PERMISSIONS.staff);
     }
   }, [state]);
+
+  function handleRoleChange(next: Role) {
+    setRole(next);
+    setPermissions(next === "tenant_admin" ? EMPTY_PERMISSIONS : ROLE_DEFAULT_PERMISSIONS[next]);
+  }
 
   if (!open) {
     return (
@@ -186,22 +203,44 @@ function InviteStaffForm() {
 
         <div>
           <label className="block text-sm font-medium text-neutral-700">角色</label>
-          <select name="role" defaultValue="staff" className={INPUT_CLASS}>
-            <option value="staff">一般業務</option>
-            <option value="tenant_admin">車行管理員</option>
+          <select
+            name="role"
+            value={role}
+            onChange={(e) => handleRoleChange(e.target.value as Role)}
+            className={INPUT_CLASS}
+          >
+            {ASSIGNABLE_ROLES.map((r) => (
+              <option key={r} value={r}>
+                {ROLE_LABELS[r]}
+              </option>
+            ))}
           </select>
         </div>
 
         <div>
-          <p className="text-sm font-medium text-neutral-700">初始權限（之後可以再調整）</p>
-          <div className="mt-1.5 flex flex-wrap gap-4">
-            {PERMISSION_FIELDS.map((f) => (
-              <label key={f.key} className="flex items-center gap-1.5 text-sm text-neutral-600">
-                <input type="checkbox" name={f.key} className="h-4 w-4 rounded border-neutral-300" />
-                {f.label}
-              </label>
-            ))}
-          </div>
+          <p className="text-sm font-medium text-neutral-700">
+            權限（已依角色帶入常用預設，可再自行調整）
+          </p>
+          {role === "tenant_admin" ? (
+            <p className="mt-1.5 text-xs text-neutral-400">老闆一律擁有全部權限，不需要另外勾選。</p>
+          ) : (
+            <div className="mt-1.5 flex flex-wrap gap-4">
+              {PERMISSION_FIELDS.map((f) => (
+                <label key={f.key} className="flex items-center gap-1.5 text-sm text-neutral-600">
+                  <input
+                    type="checkbox"
+                    name={f.key}
+                    checked={permissions[f.key]}
+                    onChange={(e) =>
+                      setPermissions((prev) => ({ ...prev, [f.key]: e.target.checked }))
+                    }
+                    className="h-4 w-4 rounded border-neutral-300"
+                  />
+                  {f.label}
+                </label>
+              ))}
+            </div>
+          )}
         </div>
 
         {state?.error && (
@@ -252,6 +291,7 @@ function StaffRow({
   // 改自己在 Server Action 那層也會被擋（見 staff-actions.ts 的
   // assertCanManage），這裡先把控制項整個關掉，不用等送出才收到錯誤。
   const canManage = !isSelf && !isSuperAdmin;
+  const isOwner = staff.role === "tenant_admin";
 
   const [roleError, setRoleError] = useState<string | null>(null);
   const [permError, setPermError] = useState<string | null>(null);
@@ -259,24 +299,32 @@ function StaffRow({
   const [, startPermTransition] = useTransition();
 
   function handleRoleChange(role: Role) {
-    const prevRole = staff.role;
-    onLocalUpdate({ role });
+    const prev = { ...staff };
+    // 樂觀更新：角色跟六個權限開關一起改成新角色的預設值，跟
+    // staff-actions.ts 的 updateStaffRole() 伺服器端行為一致，畫面才不會
+    // 在 revalidatePath 重新整理前顯示「角色已改，但權限勾選還是舊的」
+    // 這種不一致的過渡畫面。
+    const nextPermissions = role === "tenant_admin" ? {} : ROLE_DEFAULT_PERMISSIONS[role];
+    onLocalUpdate({ role, ...nextPermissions });
     startRoleTransition(async () => {
       const result = await updateStaffRole(staff.id, role);
       if (result?.error) {
         setRoleError(result.error);
-        onLocalUpdate({ role: prevRole });
+        onLocalUpdate(prev);
       } else {
         setRoleError(null);
       }
     });
   }
 
-  function handlePermissionToggle(key: "can_view_cost" | "can_view_salary" | "can_edit_cars") {
-    const next = {
+  function handlePermissionToggle(key: keyof StaffPermissionFlags) {
+    const next: StaffPermissionFlags = {
       can_view_cost: !!staff.can_view_cost,
       can_view_salary: !!staff.can_view_salary,
       can_edit_cars: !!staff.can_edit_cars,
+      can_view_all_salary: !!staff.can_view_all_salary,
+      can_approve_repairs: !!staff.can_approve_repairs,
+      can_manage_finance: !!staff.can_manage_finance,
       [key]: !staff[key],
     };
     const prev = { ...staff };
@@ -318,12 +366,15 @@ function StaffRow({
               onChange={(e) => handleRoleChange(e.target.value as Role)}
               className="rounded-lg border border-neutral-200 bg-neutral-50 px-2 py-1 text-xs text-neutral-700 outline-none focus:border-[#BFA074]"
             >
-              <option value="staff">一般業務</option>
-              <option value="tenant_admin">車行管理員</option>
+              {ASSIGNABLE_ROLES.map((r) => (
+                <option key={r} value={r}>
+                  {ROLE_LABELS[r]}
+                </option>
+              ))}
             </select>
           ) : (
             <span className="text-xs text-neutral-400">
-              {staff.role === "tenant_admin" ? "車行管理員" : "一般業務"}
+              {isSuperAdmin ? "平台最高管理者" : ROLE_LABELS[staff.role as Exclude<Role, "super_admin">]}
             </span>
           )}
 
@@ -342,7 +393,7 @@ function StaffRow({
         </div>
       </div>
 
-      {canManage && (
+      {canManage && !isOwner && (
         <div className="mt-2 flex flex-wrap gap-4">
           {PERMISSION_FIELDS.map((f) => (
             <label key={f.key} className="flex items-center gap-1.5 text-xs text-neutral-600">
@@ -356,6 +407,9 @@ function StaffRow({
             </label>
           ))}
         </div>
+      )}
+      {canManage && isOwner && (
+        <p className="mt-2 text-xs text-neutral-400">老闆一律擁有全部權限，不需要另外勾選。</p>
       )}
 
       {(roleError || permError) && (

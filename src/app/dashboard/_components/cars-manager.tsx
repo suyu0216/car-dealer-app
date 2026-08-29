@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import type { Car, RepairItem, Role } from "@/lib/supabase/types";
+import type { Car, RepairItem } from "@/lib/supabase/types";
 import type { EffectivePermissions } from "@/lib/permissions";
 import { CarsKpi } from "./cars-kpi";
 import { CarFilterBar, defaultCarFilters, type CarFilters } from "./car-filter-bar";
@@ -57,7 +57,6 @@ export function CarsManager({
   cars,
   repairItems,
   receiptUrls,
-  role,
   permissions,
   tenantName,
   staff,
@@ -65,7 +64,6 @@ export function CarsManager({
   cars: Car[];
   repairItems: RepairItem[];
   receiptUrls: Record<string, string>;
-  role: Role;
   permissions: EffectivePermissions;
   tenantName?: string;
   /** 給「上架人」顯示（car-detail-modal.tsx）跟「墊款業務/經手人」下拉選單
@@ -238,7 +236,7 @@ export function CarsManager({
       {modalState?.mode === "view" && (
         <CarDetailModal
           car={modalState.car}
-          role={role}
+          canReview={permissions.canApproveRepairs}
           canViewCost={permissions.canViewCost}
           canEditCars={permissions.canEditCars}
           tenantName={tenantName}

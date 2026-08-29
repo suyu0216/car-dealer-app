@@ -2,7 +2,7 @@
 
 import { useActionState, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import type { Car, RepairItem, RepairItemCategory, RepairItemStatus, Role } from "@/lib/supabase/types";
+import type { Car, RepairItem, RepairItemCategory, RepairItemStatus } from "@/lib/supabase/types";
 import { formatCurrency, taiwanDateParts } from "@/lib/format";
 import { createRepairItem, type RepairItemFormState } from "../repair-items-actions";
 import { REPAIR_ITEM_CATEGORIES } from "@/lib/repair-item-constants";
@@ -36,13 +36,16 @@ function isSameMonth(iso: string, now: Date) {
 export function MaintenanceModule({
   repairItems,
   cars,
-  role,
+  canReview,
   receiptUrls,
   staff,
 }: {
   repairItems: RepairItem[];
   cars: Car[];
-  role: Role;
+  /** 是否能核准/退回請款——2026-08-29 起改用 canApproveRepairs 權限開關
+   * 判斷（老闆恆為 true，會計預設也是 true，見 permissions.ts），不再只
+   * 認「是不是老闆」。 */
+  canReview: boolean;
   receiptUrls: Record<string, string>;
   /** 「墊款業務/經手人」下拉選單用——同車行的員工清單，新邀請的員工會
    * 自動出現在這裡。 */
@@ -56,7 +59,6 @@ export function MaintenanceModule({
   // （見下面 filtered 的邏輯），不會因為預設篩今天就把舊的待辦漏掉。
   const [dateFilter, setDateFilter] = useState<DateFilter>("today");
   const [showForm, setShowForm] = useState(false);
-  const canReview = role === "tenant_admin";
   const now = new Date();
 
   // 從通知鈴鐺點「傳送門」進來的話，網址會帶 ?highlight=<repair_item_id>，
