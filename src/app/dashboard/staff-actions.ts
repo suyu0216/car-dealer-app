@@ -162,20 +162,27 @@ export async function inviteStaffMember(
 
   // 先試試看這個 Email 是不是自己車行剛移出過的人——是的話直接接回來，
   // 不要再往下走一般的邀請信流程（見上方函式註解）。
+  // restore_staff_to_tenant() 是這次新增的資料庫函式，還沒被收進
+  // src/lib/supabase/types.ts 的產生型別（Database）裡，supabase-js 對
+  // 不認得的 RPC 名稱只能推斷出空物件型別 {}，直接讀 .name 會在建置時
+  // 被 TypeScript 擋下來（型別檢查失敗、not 執行期錯誤）。這裡明確標註
+  // 回傳型別，不用等哪天重新產生完整型別檔。
   const supabase = await createClient();
-  const { data: restored, error: restoreError } = await supabase
-    .rpc("restore_staff_to_tenant", {
+  const { data: restoredRows, error: restoreError } = (await supabase.rpc(
+    "restore_staff_to_tenant",
+    {
       p_email: email,
       p_role: role,
       p_can_view_cost: canViewCost,
       p_can_view_salary: canViewSalary,
       p_can_edit_cars: canEditCars,
-    })
-    .maybeSingle();
+    }
+  )) as { data: { id: string; name: string | null }[] | null; error: { message: string } | null };
 
   if (restoreError) {
     return { error: `處理失敗：${restoreError.message}` };
   }
+  const restored = restoredRows?.[0];
   if (restored) {
     revalidatePath("/dashboard");
     return {
