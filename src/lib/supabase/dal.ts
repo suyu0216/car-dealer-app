@@ -52,7 +52,7 @@ export const getCurrentProfile = cache(async () => {
   const { data: profile, error } = await supabase
     .from("profiles")
     .select(
-      "id, tenant_id, role, name, can_view_cost, can_view_salary, can_edit_cars, can_view_all_salary, can_approve_repairs, can_manage_finance, public_phone, public_line_id, show_public_contact, public_bio, public_avatar_url, created_at"
+      "id, tenant_id, role, name, can_view_cost, can_view_salary, can_edit_cars, can_view_all_salary, can_approve_repairs, can_manage_finance, can_view_analytics, public_phone, public_line_id, show_public_contact, public_bio, public_avatar_url, created_at"
     )
     .eq("id", user.id)
     .single();

@@ -99,6 +99,10 @@ export interface Profile {
   can_approve_repairs: boolean;
   /** 可以使用「會計與財務管理」頁面（公司開銷、資金總覽、淨利分潤試算）。 */
   can_manage_finance: boolean;
+  /** 可以檢視「車行經營數據看板」（場內在庫狀況、本月銷售績效、業務
+   * 排行榜、年度整備開銷趨勢）。2026-08-29 之前這個功能是跟
+   * can_view_cost 綁在一起的，現在拆成獨立欄位，兩者可以分開勾選。 */
+  can_view_analytics: boolean;
   /** 公開展示用的個人電話，員工自己在「我的公開聯繫方式」分頁填寫，選填。 */
   public_phone: string | null;
   /** 公開展示用的個人 LINE ID，同上。 */
