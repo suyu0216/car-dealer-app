@@ -117,6 +117,20 @@ export async function updateStaffPermissions(
  * invited_role，資料庫的 handle_new_user() trigger 收到信箱驗證通過、
  * auth.users 新增那筆資料時，會直接把這個帳號掛進指定的車行、套用指定的
  * 角色，不需要再手動指派（見 supabase_schema.sql 的說明）。
+ *
+ * 2026-08 補上「重新邀請剛移出的員工」這個情境：inviteUserByEmail() 只認得
+ * 「這個 Email 有沒有出現在 auth.users」，完全不知道「這個帳號其實是我
+ * 車行剛移出的人，我現在只是想把他加回來」——這種情況下 Supabase 一定
+ * 會擋下來（回傳「已經有帳號了，無法重複邀請」），因為帳號本來就還在，
+ * 不需要、也不能再寄一次「建立帳號」的邀請信。以前這裡沒處理這個情境，
+ * 車行管理員自己按「移出本車行」再馬上想加回來，會直接卡死在這個錯誤，
+ * 只能請開發者手動到後台資料庫改。
+ * 修法：寄出邀請信之前，先呼叫 restore_staff_to_tenant()——這支資料庫函式
+ * 只有在「這個 Email 對應的帳號目前沒有車行、而且上一次剛好就是被我這間
+ * 車行移出的」才會生效，直接把他接回來、套用這次表單填的角色/權限，
+ * 完全不用、也不會走 Supabase 邀請信那一段（他本來就有密碼，不需要重設）。
+ * 其餘情況（全新 Email、或這個 Email 屬於其他車行/其他狀況）一律維持
+ * 原本流程，不會讓任何車行都能撿走別的車行的舊員工帳號。
  */
 export async function inviteStaffMember(
   _prevState: InviteStaffState | undefined,
@@ -145,6 +159,29 @@ export async function inviteStaffMember(
     return { error: "角色不正確。" };
   }
   const role = roleRaw as Role;
+
+  // 先試試看這個 Email 是不是自己車行剛移出過的人——是的話直接接回來，
+  // 不要再往下走一般的邀請信流程（見上方函式註解）。
+  const supabase = await createClient();
+  const { data: restored, error: restoreError } = await supabase
+    .rpc("restore_staff_to_tenant", {
+      p_email: email,
+      p_role: role,
+      p_can_view_cost: canViewCost,
+      p_can_view_salary: canViewSalary,
+      p_can_edit_cars: canEditCars,
+    })
+    .maybeSingle();
+
+  if (restoreError) {
+    return { error: `處理失敗：${restoreError.message}` };
+  }
+  if (restored) {
+    revalidatePath("/dashboard");
+    return {
+      success: `「${restored.name ?? email}」原本就有帳號（是本車行之前移出的成員），已經直接把他加回本車行，不需要重新收邀請信，對方可以直接用原本的 Email／密碼登入。`,
+    };
+  }
 
   let adminClient;
   try {
@@ -179,7 +216,6 @@ export async function inviteStaffMember(
   // 照常把關（租戶邊界、角色限制），不需要為此再繞過 RLS。沒勾選任何一項
   // 就不用多一次寫入，資料庫預設值本來就是全部關閉。
   if (canViewCost || canViewSalary || canEditCars) {
-    const supabase = await createClient();
     await supabase
       .from("profiles")
       .update({
