@@ -1,7 +1,7 @@
 import { requireTenantUser, getTenantById } from "@/lib/supabase/dal";
 import { createClient } from "@/lib/supabase/server";
 import { createReceiptSignedUrls } from "@/lib/supabase/storage";
-import { getEffectivePermissions } from "@/lib/permissions";
+import { getEffectivePermissions, ROLE_LABELS } from "@/lib/permissions";
 import { LogoutButton } from "@/app/_components/logout-button";
 import { AppTopBar } from "@/app/_components/app-top-bar";
 import { DashboardShell } from "./_components/dashboard-shell";
@@ -85,7 +85,9 @@ export default async function DashboardPage() {
       .order("created_at", { ascending: false }),
     supabase
       .from("profiles")
-      .select("id, name, role, can_view_cost, can_view_salary, can_edit_cars")
+      .select(
+        "id, name, role, can_view_cost, can_view_salary, can_edit_cars, can_view_all_salary, can_approve_repairs, can_manage_finance"
+      )
       .order("name"),
     // 「估車申請」分頁用——顧客透過公開看車頁「我要估車」表單送出的估價
     // 需求單，見 trade-in-module.tsx。
@@ -123,7 +125,15 @@ export default async function DashboardPage() {
   const tenantVideoList = (tenantVideos ?? []) as TenantVideo[];
   const staffAccounts = (staffProfiles ?? []) as Pick<
     Profile,
-    "id" | "name" | "role" | "can_view_cost" | "can_view_salary" | "can_edit_cars"
+    | "id"
+    | "name"
+    | "role"
+    | "can_view_cost"
+    | "can_view_salary"
+    | "can_edit_cars"
+    | "can_view_all_salary"
+    | "can_approve_repairs"
+    | "can_manage_finance"
   >[];
   // 給下拉選單（維修請款經手人、合約承辦業務）用的輕量版本，跟原本一樣。
   const staffList = staffAccounts.map((p) => ({ id: p.id, name: p.name }));
@@ -145,7 +155,7 @@ export default async function DashboardPage() {
           </h1>
           <p className="text-sm text-neutral-500">
             {profile.name ?? "使用者"} ・{" "}
-            {profile.role === "tenant_admin" ? "車行管理員" : "員工"}
+            {profile.role === "super_admin" ? "平台管理員" : ROLE_LABELS[profile.role]}
           </p>
           {(tenantInfo?.phone || tenantInfo?.address || tenantInfo?.business_hours) && (
             <p className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-neutral-400">
@@ -191,7 +201,6 @@ export default async function DashboardPage() {
         staffAccounts={staffAccounts}
         currentUserId={user.id}
         receiptUrls={receiptUrls}
-        role={profile.role}
         permissions={permissions}
         tenant={tenantInfo}
         tenantName={tenantInfo?.name}

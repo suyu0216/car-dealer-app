@@ -6,7 +6,19 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getSiteUrl } from "@/lib/supabase/site-url";
 import { uploadStaffAvatar } from "@/lib/supabase/storage";
+import { ROLE_DEFAULT_PERMISSIONS } from "@/lib/permissions";
 import type { Role } from "@/lib/supabase/types";
+
+/** 六個權限開關的完整組合，updateStaffPermissions／inviteStaffMember／
+ * restore_staff_to_tenant 呼叫都用這個型別，避免漏帶欄位。 */
+export interface StaffPermissionFlags {
+  can_view_cost: boolean;
+  can_view_salary: boolean;
+  can_edit_cars: boolean;
+  can_view_all_salary: boolean;
+  can_approve_repairs: boolean;
+  can_manage_finance: boolean;
+}
 
 export interface StaffActionResult {
   error?: string;
@@ -26,7 +38,7 @@ export interface MyContactState {
   warning?: string;
 }
 
-const MANAGEABLE_ROLES: Role[] = ["tenant_admin", "staff"];
+const MANAGEABLE_ROLES: Role[] = ["tenant_admin", "manager", "accountant", "staff"];
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /**
@@ -52,7 +64,19 @@ async function assertCanManage(targetProfileId: string) {
   return { ok: true as const };
 }
 
-/** 切換員工角色：管理員 Admin（tenant_admin） ⇄ 一般業務 Sales（staff）。 */
+/**
+ * 切換員工角色：老闆（tenant_admin）／店長（manager）／會計（accountant）／
+ * 員工（staff）四選一。
+ *
+ * 2026-08-29：角色一改變，六個權限開關會「一併重設成新角色的預設值」
+ * （見 permissions.ts 的 ROLE_DEFAULT_PERMISSIONS），不是保留舊角色留下來
+ * 的組合——這是方案二「角色決定預設」的具體實作：把某人從「員工」切成
+ * 「會計」，應該立刻拿到會計的完整預設權限（審核請款、看全體薪資、財務
+ * 頁面），而不是還卡在員工的權限、要老闆自己再一項一項手動打開。老闆
+ * 之後仍然可以在下面的權限開關再個別微調（個人化微調），這裡只負責
+ * 「換角色當下」的合理起點。切成 tenant_admin 的話六個開關維持原樣不動
+ * ——反正老闆不看這六個開關，getEffectivePermissions() 一律給滿權限。
+ */
 export async function updateStaffRole(
   targetProfileId: string,
   role: Role
@@ -65,7 +89,12 @@ export async function updateStaffRole(
   }
 
   const supabase = await createClient();
-  const { error } = await supabase.from("profiles").update({ role }).eq("id", targetProfileId);
+  const updatePayload: { role: Role } & Partial<StaffPermissionFlags> = { role };
+  if (role !== "tenant_admin") {
+    Object.assign(updatePayload, ROLE_DEFAULT_PERMISSIONS[role]);
+  }
+
+  const { error } = await supabase.from("profiles").update(updatePayload).eq("id", targetProfileId);
 
   if (error) {
     return { error: `更新角色失敗：${error.message}` };
@@ -76,14 +105,14 @@ export async function updateStaffRole(
 }
 
 /**
- * 更新單一員工的三個權限細項開關。一次只切換一個開關，所以呼叫端要把
- * 「這個人現在完整的三個值」都帶上（切換那個開關取反、其他兩個維持原樣），
+ * 更新單一員工的六個權限細項開關。一次只切換一個開關，所以呼叫端要把
+ * 「這個人現在完整的六個值」都帶上（切換那個開關取反、其他維持原樣），
  * 不能只傳被改動的那一個欄位，不然沒被提到的欄位在 Supabase update 裡
  * 會被當成「不變更」，這點呼叫端（settings-module.tsx）已經處理好了。
  */
 export async function updateStaffPermissions(
   targetProfileId: string,
-  permissions: { can_view_cost: boolean; can_view_salary: boolean; can_edit_cars: boolean }
+  permissions: StaffPermissionFlags
 ): Promise<StaffActionResult> {
   const check = await assertCanManage(targetProfileId);
   if (!check.ok) return { error: check.error };
@@ -95,6 +124,9 @@ export async function updateStaffPermissions(
       can_view_cost: !!permissions.can_view_cost,
       can_view_salary: !!permissions.can_view_salary,
       can_edit_cars: !!permissions.can_edit_cars,
+      can_view_all_salary: !!permissions.can_view_all_salary,
+      can_approve_repairs: !!permissions.can_approve_repairs,
+      can_manage_finance: !!permissions.can_manage_finance,
     })
     .eq("id", targetProfileId);
 
@@ -151,6 +183,9 @@ export async function inviteStaffMember(
   const canViewCost = formData.get("can_view_cost") === "on";
   const canViewSalary = formData.get("can_view_salary") === "on";
   const canEditCars = formData.get("can_edit_cars") === "on";
+  const canViewAllSalary = formData.get("can_view_all_salary") === "on";
+  const canApproveRepairs = formData.get("can_approve_repairs") === "on";
+  const canManageFinance = formData.get("can_manage_finance") === "on";
 
   if (!email || !EMAIL_PATTERN.test(email)) {
     return { error: "請輸入正確的 Email 格式。" };
@@ -176,6 +211,9 @@ export async function inviteStaffMember(
       p_can_view_cost: canViewCost,
       p_can_view_salary: canViewSalary,
       p_can_edit_cars: canEditCars,
+      p_can_view_all_salary: canViewAllSalary,
+      p_can_approve_repairs: canApproveRepairs,
+      p_can_manage_finance: canManageFinance,
     }
   )) as { data: { id: string; name: string | null }[] | null; error: { message: string } | null };
 
@@ -222,13 +260,16 @@ export async function inviteStaffMember(
   // admin client），讓 profiles_tenant_admin_manage 這條 RLS policy
   // 照常把關（租戶邊界、角色限制），不需要為此再繞過 RLS。沒勾選任何一項
   // 就不用多一次寫入，資料庫預設值本來就是全部關閉。
-  if (canViewCost || canViewSalary || canEditCars) {
+  if (canViewCost || canViewSalary || canEditCars || canViewAllSalary || canApproveRepairs || canManageFinance) {
     await supabase
       .from("profiles")
       .update({
         can_view_cost: canViewCost,
         can_view_salary: canViewSalary,
         can_edit_cars: canEditCars,
+        can_view_all_salary: canViewAllSalary,
+        can_approve_repairs: canApproveRepairs,
+        can_manage_finance: canManageFinance,
       })
       .eq("id", data.user.id);
   }

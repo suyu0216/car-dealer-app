@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { requireTenantUser } from "@/lib/supabase/dal";
+import { getEffectivePermissions } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
 import { uploadReceiptFile } from "@/lib/supabase/storage";
 import { createNotification } from "@/lib/supabase/notifications";
@@ -124,10 +125,12 @@ export async function createRepairItem(
 
 /**
  * 會計審核：核准撥款 / 退回。
- * 刻意限制只有 tenant_admin（車行管理員，扮演會計角色 —— 系統目前沒有
- * 獨立的「會計」角色）能執行，一般員工只能送出申請、不能自己核准自己的
- * 請款。前端也會隱藏這兩顆按鈕，但實際的權限判斷一定要在這裡（伺服器端）
- * 再做一次，不能只靠前端藏起來。
+ * 2026-08-29 起改用 canApproveRepairs（見 src/lib/permissions.ts）判斷，
+ * 不再只認 tenant_admin：老闆一律有這個權限，「會計」角色預設也有，
+ * 「店長」「員工」則預設沒有、但老闆可以在「帳號與權限管理」個別開放。
+ * 一般員工只能送出申請、不能自己核准自己的請款。前端也會隱藏這兩顆
+ * 按鈕，但實際的權限判斷一定要在這裡（伺服器端）再做一次，不能只靠
+ * 前端藏起來。
  */
 export async function reviewRepairItem(
   itemId: string,
@@ -135,7 +138,7 @@ export async function reviewRepairItem(
 ): Promise<RepairReviewResult> {
   const { profile } = await requireTenantUser();
 
-  if (profile.role !== "tenant_admin") {
+  if (!getEffectivePermissions(profile).canApproveRepairs) {
     return { error: "沒有權限執行會計審核，請聯繫車行管理員。" };
   }
 
