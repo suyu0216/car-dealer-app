@@ -16,7 +16,7 @@
 //     情況退回用 deals.created_at 當月份，避免這筆抽成憑空消失、算不到
 //     任何月份。
 import { useState } from "react";
-import { formatCurrency, formatDate } from "@/lib/format";
+import { formatCurrency, formatDate, formatNumber } from "@/lib/format";
 
 type StaffOption = { id: string; name: string | null };
 
@@ -98,6 +98,40 @@ export function PayrollModule({
   const commissionTotal = commissionDeals.reduce((sum, d) => sum + Number(d.commission_amount ?? 0), 0);
   const grandTotal = salaryTotal + commissionTotal;
 
+  // 2026-08-29 新增：「薪水成長趨勢」——安安希望業務三不五時打開網頁能
+  // 看到自己的薪水有成長，原本這個分頁一次只看單一月份的數字，看不出
+  // 「有沒有變好」。這裡用同一套底薪/抽成計算方式，額外算出「目前選定
+  // 月份」往前推 6 個月（含當月）的每月應付總額，畫成一排長條圖，
+  // 底薪/抽成的月份歸屬規則跟上面單月明細完全一致，不會有兩套不同答案。
+  function monthKeysEndingAt(endMonthKey: string, count: number): string[] {
+    const [y, m] = endMonthKey.split("-").map(Number);
+    const keys: string[] = [];
+    for (let i = count - 1; i >= 0; i -= 1) {
+      const d = new Date(y, m - 1 - i, 1);
+      keys.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+    }
+    return keys;
+  }
+  function totalsForMonth(monthKey: string) {
+    if (!selectedId) return 0;
+    const salary = expenses
+      .filter(
+        (e) => e.category === "人事薪資" && e.employee_profile_id === selectedId && e.expense_date.slice(0, 7) === monthKey
+      )
+      .reduce((sum, e) => sum + Number(e.amount), 0);
+    const commission = deals
+      .filter((d) => d.salesperson_id === selectedId && d.status === "delivered" && dealMonthKey(d) === monthKey)
+      .reduce((sum, d) => sum + Number(d.commission_amount ?? 0), 0);
+    return salary + commission;
+  }
+  const trendMonths = monthKeysEndingAt(month, 6);
+  const trendTotals = trendMonths.map((mk) => ({ month: mk, total: totalsForMonth(mk) }));
+  const trendMax = Math.max(1, ...trendTotals.map((t) => t.total));
+  // 跟上個月比較的成長率——只有上個月「有領到錢」時才顯示百分比，避免
+  // 上個月是 0 時算出無意義的「成長 N 萬 %」。
+  const prevMonthTotal = trendTotals.length >= 2 ? trendTotals[trendTotals.length - 2].total : 0;
+  const growthPct = prevMonthTotal > 0 ? Math.round(((grandTotal - prevMonthTotal) / prevMonthTotal) * 100) : null;
+
   return (
     <section className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
@@ -145,6 +179,43 @@ export function PayrollModule({
             <p className="mt-1 text-xs text-neutral-400">
               底薪／獎金 {formatCurrency(salaryTotal)} ＋ 抽成 {formatCurrency(commissionTotal)}
             </p>
+            {growthPct !== null && (
+              <p
+                className={
+                  "mt-2 inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold " +
+                  (growthPct >= 0 ? "bg-emerald-50 text-emerald-600" : "bg-red-50 text-red-600")
+                }
+              >
+                {growthPct >= 0 ? "📈" : "📉"} 較上月 {growthPct >= 0 ? "+" : ""}
+                {growthPct}%
+              </p>
+            )}
+          </div>
+
+          {/* 薪水成長趨勢：近 6 個月（含當前選定月份）應付總額長條圖，讓
+              業務／老闆一眼看出是不是月月在進步，不用自己每個月切換月份
+              手動比對。 */}
+          <div className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
+            <h3 className="text-sm font-semibold text-neutral-800">📈 近 6 個月薪水趨勢</h3>
+            <p className="mt-0.5 text-xs text-neutral-400">底薪／獎金＋抽成，依月份加總</p>
+            <div className="mt-4 flex items-end gap-2 sm:gap-3">
+              {trendTotals.map(({ month: mk, total }) => {
+                const [, mNum] = mk.split("-");
+                const isCurrent = mk === month;
+                return (
+                  <div key={mk} className="flex flex-1 flex-col items-center gap-1">
+                    <span className="text-[10px] tabular-nums text-neutral-400">
+                      {total > 0 ? formatNumber(Math.round(total / 1000)) + "k" : ""}
+                    </span>
+                    <div
+                      className={"w-full rounded-t-md " + (isCurrent ? "bg-[#BFA074]" : "bg-[#E7DAC3]")}
+                      style={{ height: `${Math.max(4, (total / trendMax) * 96)}px` }}
+                    />
+                    <span className="text-[10px] text-neutral-400">{Number(mNum)}月</span>
+                  </div>
+                );
+              })}
+            </div>
           </div>
 
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
