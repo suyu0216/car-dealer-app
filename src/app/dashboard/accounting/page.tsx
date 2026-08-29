@@ -64,6 +64,7 @@ type CashPoolProfile = Pick<
   | "can_view_all_salary"
   | "can_approve_repairs"
   | "can_manage_finance"
+  | "can_view_analytics"
   | "tenant_id"
 >;
 type CashPoolTenant = Pick<
@@ -160,7 +161,7 @@ export default function AccountingPage() {
     const { data: profileData } = await supabase
       .from("profiles")
       .select(
-        "id, tenant_id, role, can_view_cost, can_view_salary, can_edit_cars, can_view_all_salary, can_approve_repairs, can_manage_finance"
+        "id, tenant_id, role, can_view_cost, can_view_salary, can_edit_cars, can_view_all_salary, can_approve_repairs, can_manage_finance, can_view_analytics"
       )
       .eq("id", user.id)
       .single();
