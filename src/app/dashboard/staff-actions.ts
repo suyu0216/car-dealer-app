@@ -90,7 +90,12 @@ export async function updateStaffRole(
 
   const supabase = await createClient();
   const updatePayload: { role: Role } & Partial<StaffPermissionFlags> = { role };
-  if (role !== "tenant_admin") {
+  // 排除 super_admin 只是為了讓 TypeScript 縮小型別（上面的 MANAGEABLE_ROLES
+  // 檢查已經在執行期擋掉 super_admin，但 .includes() 不會幫忙縮小型別，
+  // 不排除的話 role 在這裡的型別仍然是 "super_admin" | "manager" |
+  // "accountant" | "staff"，拿去查 ROLE_DEFAULT_PERMISSIONS 這個只認得
+  // 後三種角色的 Record 會被 TypeScript 判定為 TS7053、導致 build 失敗）。
+  if (role !== "tenant_admin" && role !== "super_admin") {
     Object.assign(updatePayload, ROLE_DEFAULT_PERMISSIONS[role]);
   }
 
