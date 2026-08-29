@@ -96,20 +96,25 @@ create table if not exists public.profiles (
   id         uuid primary key references auth.users (id) on delete cascade,
   tenant_id  uuid references public.tenants (id) on delete set null,
   role       text not null default 'staff'
-             check (role in ('super_admin', 'tenant_admin', 'staff')),
+             check (role in ('super_admin', 'tenant_admin', 'manager', 'accountant', 'staff')),
   name       text,
   created_at timestamptz not null default now()
 );
 
-comment on table public.profiles is '使用者角色與所屬車行；role: super_admin(平台管理員) / tenant_admin(車行管理員) / staff(一般員工)';
+comment on table public.profiles is '使用者角色與所屬車行；role: super_admin(平台管理員) / tenant_admin(老闆/車行管理員) / manager(店長) / accountant(會計) / staff(一般員工)';
 
--- super_admin 不隸屬任何車行，tenant_admin / staff 必須有 tenant_id 才能存取業務資料。
+-- super_admin 不隸屬任何車行，其餘四個角色必須有 tenant_id 才能存取業務資料。
 create index if not exists profiles_tenant_id_idx on public.profiles (tenant_id);
 
--- 角色權限管理（RBAC）／業務權限開關：三個個別權限開關，只對 role = 'staff'
--- 有意義——tenant_admin（車行管理員）不管這三欄存什麼值，一律視為全部
--- true（見 src/lib/permissions.ts 的 getEffectivePermissions()，前端/
--- Server Action 一律透過那支函式取得「實際生效」的權限，不要直接讀這三欄）。
+-- 角色權限管理（RBAC）／業務權限開關：六個個別權限開關，只對「非老闆」
+-- 角色（manager/accountant/staff）有意義——tenant_admin（老闆/車行管理員）
+-- 不管這六欄存什麼值，一律視為全部 true（見 src/lib/permissions.ts 的
+-- getEffectivePermissions()，前端/ Server Action 一律透過那支函式取得
+-- 「實際生效」的權限，不要直接讀這六欄）。角色只負責決定「切換角色當下」
+-- 要套用哪組預設值（見 permissions.ts 的 ROLE_DEFAULT_PERMISSIONS），
+-- 之後老闆還能針對個別員工再微調，不受角色綁死——這是 2026-08-29
+-- 從「車行管理員/一般員工」兩級擴充成「老闆/會計/店長/員工」四級時的
+-- 設計主軸（方案二：角色決定預設＋個人化微調）。
 -- 預設值的考量：can_view_cost 預設 false（成本/底價是敏感財務資訊，預設
 -- 不給一般業務看，管理員要手動開）；can_view_salary / can_edit_cars 預設
 -- true（一般業務照舊看得到自己的業績、也能維護車輛資料，符合現有的使用
@@ -117,6 +122,17 @@ create index if not exists profiles_tenant_id_idx on public.profiles (tenant_id)
 alter table public.profiles add column if not exists can_view_cost   boolean not null default false;
 alter table public.profiles add column if not exists can_view_salary boolean not null default true;
 alter table public.profiles add column if not exists can_edit_cars   boolean not null default true;
+
+-- 2026-08-29 新增的三個開關，語意跟上面三個一致：
+--   can_view_all_salary：看得到全體員工的薪資/抽成，不是只有自己的——
+--     「業務薪資」「薪資單」模組用，預設 false（老闆/會計角色預設打開）。
+--   can_approve_repairs：可以審核（核准/退回）維修與美容請款，扮演「會計
+--     審核」角色，預設 false（老闆/會計角色預設打開）。
+--   can_manage_finance：可以使用「會計與財務管理」頁面（公司開銷/資金
+--     總覽/淨利分潤），預設 false（老闆/會計角色預設打開）。
+alter table public.profiles add column if not exists can_view_all_salary boolean not null default false;
+alter table public.profiles add column if not exists can_approve_repairs boolean not null default false;
+alter table public.profiles add column if not exists can_manage_finance  boolean not null default false;
 
 -- -----------------------------------------------------------------------------
 -- 3. cars（車輛 / 進銷存主體）
@@ -585,12 +601,13 @@ create policy "profiles_select_same_tenant"
     and tenant_id = public.current_tenant_id()
   );
 
--- 角色權限管理（RBAC）：車行管理員可以修改「同車行」其他員工的角色與三個
--- 權限開關（can_view_cost / can_view_salary / can_edit_cars），也可以把
--- 員工「移出本車行」（見 settings-module.tsx 的 handleRemoveStaff，做法是
--- 把該員工的 tenant_id 更新成 null，解除跟這間車行的連結）。
--- with check 特別限制 role 只能設成 tenant_admin 或 staff——不能透過這個
--- policy 把自己或別人的角色改成 super_admin（防止權限提升）；tenant_id
+-- 角色權限管理（RBAC）：老闆（tenant_admin）可以修改「同車行」其他員工的
+-- 角色與六個權限開關，也可以把員工「移出本車行」（見 settings-module.tsx
+-- 的 handleRemoveStaff，做法是把該員工的 tenant_id 更新成 null，解除跟
+-- 這間車行的連結）。
+-- with check 特別限制 role 只能設成 tenant_admin / manager / accountant /
+-- staff 其中一種——不能透過這個 policy 把自己或別人的角色改成
+-- super_admin（防止權限提升）；tenant_id
 -- 允許維持原車行（改角色/權限用）或改成 null（移出車行用）這兩種結果，
 -- 但不允許改成「別間車行的 tenant_id」——因為管理員自己的
 -- current_tenant_id() 是固定值，這裡沒有開放「current_tenant_id() 以外、
@@ -617,7 +634,7 @@ create policy "profiles_tenant_admin_manage"
   )
   with check (
     public.current_role_name() = 'tenant_admin'
-    and role in ('tenant_admin', 'staff')
+    and role in ('tenant_admin', 'manager', 'accountant', 'staff')
     and (tenant_id = public.current_tenant_id() or tenant_id is null)
   );
 
@@ -636,6 +653,9 @@ begin
      or (new.can_view_cost is distinct from old.can_view_cost)
      or (new.can_view_salary is distinct from old.can_view_salary)
      or (new.can_edit_cars is distinct from old.can_edit_cars)
+     or (new.can_view_all_salary is distinct from old.can_view_all_salary)
+     or (new.can_approve_repairs is distinct from old.can_approve_repairs)
+     or (new.can_manage_finance is distinct from old.can_manage_finance)
   then
     if public.is_super_admin() then
       return new;
@@ -643,7 +663,7 @@ begin
 
     if public.current_role_name() = 'tenant_admin'
        and new.id <> auth.uid()
-       and new.role = any (array['tenant_admin', 'staff'])
+       and new.role = any (array['tenant_admin', 'manager', 'accountant', 'staff'])
        and (
          -- 原本的方向：本來就在自己車行的人，改權限、改角色，或移出
          -- （tenant_id 變成 null）。
@@ -712,7 +732,10 @@ begin
         removed_from_tenant_id = v_caller_tenant,
         can_view_cost = false,
         can_view_salary = false,
-        can_edit_cars = false
+        can_edit_cars = false,
+        can_view_all_salary = false,
+        can_approve_repairs = false,
+        can_manage_finance = false
     where id = target_id
       and tenant_id = v_caller_tenant;
 
@@ -755,12 +778,19 @@ comment on column public.profiles.removed_from_tenant_id is
 -- 函式定義已經是最新版，這裡不重複貼一次完整定義；只在此處註明這個
 -- 欄位是從這個函式的哪個時間點開始被寫入的）。
 
+-- 2026-08-29：簽名從 5 個 boolean 參數擴充成 8 個（多了三個新權限開關），
+-- 先 drop 掉舊版避免留下重複的 overload。
+drop function if exists public.restore_staff_to_tenant(text, text, boolean, boolean, boolean);
+
 create or replace function public.restore_staff_to_tenant(
   p_email text,
   p_role text,
   p_can_view_cost boolean default false,
   p_can_view_salary boolean default false,
-  p_can_edit_cars boolean default false
+  p_can_edit_cars boolean default false,
+  p_can_view_all_salary boolean default false,
+  p_can_approve_repairs boolean default false,
+  p_can_manage_finance boolean default false
 )
 returns table(id uuid, name text)
 language plpgsql
@@ -776,7 +806,7 @@ begin
     raise exception '沒有權限執行這項操作，請聯繫車行管理員。' using errcode = '42501';
   end if;
 
-  if p_role not in ('tenant_admin', 'staff') then
+  if p_role not in ('tenant_admin', 'manager', 'accountant', 'staff') then
     raise exception '角色不正確。' using errcode = '22023';
   end if;
 
@@ -800,6 +830,9 @@ begin
         can_view_cost = p_can_view_cost,
         can_view_salary = p_can_view_salary,
         can_edit_cars = p_can_edit_cars,
+        can_view_all_salary = p_can_view_all_salary,
+        can_approve_repairs = p_can_approve_repairs,
+        can_manage_finance = p_can_manage_finance,
         removed_from_tenant_id = null
     where p.id = v_target_id;
 
@@ -807,7 +840,7 @@ begin
 end;
 $$;
 
-grant execute on function public.restore_staff_to_tenant(text, text, boolean, boolean, boolean) to authenticated;
+grant execute on function public.restore_staff_to_tenant(text, text, boolean, boolean, boolean, boolean, boolean, boolean) to authenticated;
 
 -- -----------------------------------------------------------------------------
 -- cars policies
