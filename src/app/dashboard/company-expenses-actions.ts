@@ -29,9 +29,13 @@ function optionalText(formData: FormData, name: string): string | null {
 
 /**
  * 新增一筆公司營運開銷（水電、租金、廣告等跟特定車輛無關的固定支出）。
- * 跟車輛「成本與底價」用同一套 canViewCost 權限把關——沒有這個權限的人
- * 連 /dashboard/accounting 這個頁面都進不去（見 accounting/page.tsx），
- * 這裡是伺服器端第二道防線，避免繞過前端直接呼叫這支 Server Action。
+ * 2026-08-29 修正：原本這裡跟車輛「檢視成本與底價」（canViewCost）共用
+ * 同一套權限把關，但 accounting/page.tsx 頁面本身「公司營運開銷」這個
+ * 分頁實際是用 canManageFinance 決定要不要顯示——兩邊條件對不起來，會
+ * 出現「有人被設定 canManageFinance=true、canViewCost=false，側邊欄
+ * 跟分頁都能點進去操作，送出當下卻被這裡擋下來」的落差。改成跟頁面
+ * 實際邏輯一致，這裡是伺服器端第二道防線，避免繞過前端直接呼叫這支
+ * Server Action。
  */
 export async function createCompanyExpense(
   _prevState: CompanyExpenseFormState | undefined,
@@ -39,8 +43,8 @@ export async function createCompanyExpense(
 ): Promise<CompanyExpenseFormState> {
   const { profile } = await requireTenantUser();
 
-  if (!getEffectivePermissions(profile).canViewCost) {
-    return { error: "沒有權限新增公司開銷，請聯繫車行管理員開啟「檢視成本與底價」權限。" };
+  if (!getEffectivePermissions(profile).canManageFinance) {
+    return { error: "沒有權限新增公司開銷，請聯繫車行管理員開啟「管理財務（公司開銷/資金總覽/分潤）」權限。" };
   }
 
   const expenseDate = String(formData.get("expense_date") ?? "").trim();
@@ -107,14 +111,15 @@ export async function createCompanyExpense(
 }
 
 /**
- * 刪除一筆公司開銷（例如記錯類別/金額）。跟新增一樣受 canViewCost 把關；
- * RLS 的 company_expenses_tenant_scoped policy 再確保只能刪到自己車行的資料。
+ * 刪除一筆公司開銷（例如記錯類別/金額）。跟新增一樣受 canManageFinance
+ * 把關（原因同上）；RLS 的 company_expenses_tenant_scoped policy 再確保
+ * 只能刪到自己車行的資料。
  */
 export async function deleteCompanyExpense(expenseId: string): Promise<CompanyExpenseFormState> {
   const { profile } = await requireTenantUser();
 
-  if (!getEffectivePermissions(profile).canViewCost) {
-    return { error: "沒有權限刪除公司開銷，請聯繫車行管理員開啟「檢視成本與底價」權限。" };
+  if (!getEffectivePermissions(profile).canManageFinance) {
+    return { error: "沒有權限刪除公司開銷，請聯繫車行管理員開啟「管理財務（公司開銷/資金總覽/分潤）」權限。" };
   }
 
   const supabase = await createClient();

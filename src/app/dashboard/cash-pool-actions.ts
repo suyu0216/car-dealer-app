@@ -74,7 +74,11 @@ export async function saveCashPoolOpening(
 /**
  * 手動記一筆「其他現金異動」——不屬於成交收款／公司開銷／進貨付款的部分，
  * 例如老闆存入/提領、銀行利息、轉帳手續費。寫進本來就存在、但一直沒被用
- * 到的 transactions 表。跟公司開銷用同一套 canViewCost 權限把關。
+ * 到的 transactions 表。
+ * 2026-08-29 修正：原本跟公司開銷一樣共用 canViewCost 權限把關，但
+ * accounting/page.tsx 的「資金總覽」分頁實際是用 canManageFinance 決定
+ * 要不要顯示——理由跟 company-expenses-actions.ts 同一批修正一致，改成
+ * 跟頁面實際邏輯對齊。
  */
 export async function createManualCashTransaction(
   _prevState: CashPoolFormState | undefined,
@@ -82,8 +86,8 @@ export async function createManualCashTransaction(
 ): Promise<CashPoolFormState> {
   const { profile } = await requireTenantUser();
 
-  if (!getEffectivePermissions(profile).canViewCost) {
-    return { error: "沒有權限新增資金紀錄，請聯繫車行管理員開啟「檢視成本與底價」權限。" };
+  if (!getEffectivePermissions(profile).canManageFinance) {
+    return { error: "沒有權限新增資金紀錄，請聯繫車行管理員開啟「管理財務（公司開銷/資金總覽/分潤）」權限。" };
   }
 
   const date = String(formData.get("date") ?? "").trim();
@@ -122,13 +126,14 @@ export async function createManualCashTransaction(
   return { success: true };
 }
 
-/** 刪除一筆手動記帳（例如記錯了）。跟新增一樣受 canViewCost 把關；RLS 的
- * transactions_tenant_scoped policy 再確保只能刪到自己車行的資料。 */
+/** 刪除一筆手動記帳（例如記錯了）。跟新增一樣受 canManageFinance 把關
+ * （原因同上）；RLS 的 transactions_tenant_scoped policy 再確保只能刪到
+ * 自己車行的資料。 */
 export async function deleteManualCashTransaction(transactionId: string): Promise<CashPoolFormState> {
   const { profile } = await requireTenantUser();
 
-  if (!getEffectivePermissions(profile).canViewCost) {
-    return { error: "沒有權限刪除資金紀錄，請聯繫車行管理員開啟「檢視成本與底價」權限。" };
+  if (!getEffectivePermissions(profile).canManageFinance) {
+    return { error: "沒有權限刪除資金紀錄，請聯繫車行管理員開啟「管理財務（公司開銷/資金總覽/分潤）」權限。" };
   }
 
   const supabase = await createClient();
