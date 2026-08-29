@@ -103,7 +103,19 @@ export default async function DashboardLayout({
       href: "/dashboard?module=commission",
       module: "commission",
     },
-    ...(permissions.canViewCost
+    // 2026-08-29：這兩個入口原本共用 canViewCost 一個條件，各自拆開成
+    // 對應自己實際存取邏輯的權限——
+    //   - 「車行經營數據看板」以前跟「檢視成本與底價」綁在一起，兩者
+    //     沒辦法分開勾選，現在改用獨立的 canViewAnalytics 判斷（見
+    //     src/lib/permissions.ts）。
+    //   - 「公司會計與營運記帳」這裡以前也是用 canViewCost 判斷要不要
+    //     顯示入口，但頁面本身（accounting/page.tsx）真正檢查的是
+    //     canManageFinance（開放公司開銷/資金總覽/淨利分潤）或
+    //     canViewSalary（只開放薪資單、只看自己）——兩邊條件對不起來，
+    //     會出現「一般員工（預設 canViewCost=false、canViewSalary=true）
+    //     理論上能看自己的薪資單，但側邊欄根本沒有入口點得進去」這種
+    //     落差。改成跟頁面實際邏輯一致，兩者有一個成立就顯示入口。
+    ...(permissions.canViewAnalytics
       ? [
           {
             key: "analytics",
@@ -112,8 +124,10 @@ export default async function DashboardLayout({
             href: "/dashboard?module=analytics",
             module: "analytics",
           },
-          { key: "accounting", label: "公司會計與營運記帳", icon: "💼", href: "/dashboard/accounting" },
         ]
+      : []),
+    ...(permissions.canManageFinance || permissions.canViewSalary
+      ? [{ key: "accounting", label: "公司會計與營運記帳", icon: "💼", href: "/dashboard/accounting" }]
       : []),
     ...(permissions.canManageStaff
       ? [

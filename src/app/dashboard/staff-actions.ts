@@ -18,6 +18,7 @@ export interface StaffPermissionFlags {
   can_view_all_salary: boolean;
   can_approve_repairs: boolean;
   can_manage_finance: boolean;
+  can_view_analytics: boolean;
 }
 
 export interface StaffActionResult {
@@ -132,6 +133,7 @@ export async function updateStaffPermissions(
       can_view_all_salary: !!permissions.can_view_all_salary,
       can_approve_repairs: !!permissions.can_approve_repairs,
       can_manage_finance: !!permissions.can_manage_finance,
+      can_view_analytics: !!permissions.can_view_analytics,
     })
     .eq("id", targetProfileId);
 
@@ -191,6 +193,7 @@ export async function inviteStaffMember(
   const canViewAllSalary = formData.get("can_view_all_salary") === "on";
   const canApproveRepairs = formData.get("can_approve_repairs") === "on";
   const canManageFinance = formData.get("can_manage_finance") === "on";
+  const canViewAnalytics = formData.get("can_view_analytics") === "on";
 
   if (!email || !EMAIL_PATTERN.test(email)) {
     return { error: "請輸入正確的 Email 格式。" };
@@ -219,6 +222,7 @@ export async function inviteStaffMember(
       p_can_view_all_salary: canViewAllSalary,
       p_can_approve_repairs: canApproveRepairs,
       p_can_manage_finance: canManageFinance,
+      p_can_view_analytics: canViewAnalytics,
     }
   )) as { data: { id: string; name: string | null }[] | null; error: { message: string } | null };
 
@@ -265,7 +269,15 @@ export async function inviteStaffMember(
   // admin client），讓 profiles_tenant_admin_manage 這條 RLS policy
   // 照常把關（租戶邊界、角色限制），不需要為此再繞過 RLS。沒勾選任何一項
   // 就不用多一次寫入，資料庫預設值本來就是全部關閉。
-  if (canViewCost || canViewSalary || canEditCars || canViewAllSalary || canApproveRepairs || canManageFinance) {
+  if (
+    canViewCost ||
+    canViewSalary ||
+    canEditCars ||
+    canViewAllSalary ||
+    canApproveRepairs ||
+    canManageFinance ||
+    canViewAnalytics
+  ) {
     await supabase
       .from("profiles")
       .update({
@@ -275,6 +287,7 @@ export async function inviteStaffMember(
         can_view_all_salary: canViewAllSalary,
         can_approve_repairs: canApproveRepairs,
         can_manage_finance: canManageFinance,
+        can_view_analytics: canViewAnalytics,
       })
       .eq("id", data.user.id);
   }

@@ -86,7 +86,7 @@ export default async function DashboardPage() {
     supabase
       .from("profiles")
       .select(
-        "id, name, role, can_view_cost, can_view_salary, can_edit_cars, can_view_all_salary, can_approve_repairs, can_manage_finance"
+        "id, name, role, can_view_cost, can_view_salary, can_edit_cars, can_view_all_salary, can_approve_repairs, can_manage_finance, can_view_analytics"
       )
       .order("name"),
     // 「估車申請」分頁用——顧客透過公開看車頁「我要估車」表單送出的估價
@@ -134,6 +134,7 @@ export default async function DashboardPage() {
     | "can_view_all_salary"
     | "can_approve_repairs"
     | "can_manage_finance"
+    | "can_view_analytics"
   >[];
   // 給下拉選單（維修請款經手人、合約承辦業務）用的輕量版本，跟原本一樣。
   const staffList = staffAccounts.map((p) => ({ id: p.id, name: p.name }));
@@ -189,7 +190,7 @@ export default async function DashboardPage() {
       {tenantInfo?.status === "pending" && <PendingApprovalBanner />}
 
       {/* 核心模組：車輛庫存 / 整備維修與會計 / CRM / 合約 / 業務薪資 /
-          經營數據看板（僅 canViewCost）/ 帳號與權限管理（僅 canManageStaff） */}
+          經營數據看板（僅 canViewAnalytics）/ 帳號與權限管理（僅 canManageStaff） */}
       <DashboardShell
         cars={carList}
         repairItems={repairItemList}
