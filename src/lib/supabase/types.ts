@@ -1,7 +1,7 @@
 // 共用型別，對應 supabase_schema.sql 的資料表結構。
 // 若之後改用 `supabase gen types typescript`，可以直接取代這個檔案。
 
-export type Role = "super_admin" | "tenant_admin" | "staff";
+export type Role = "super_admin" | "tenant_admin" | "manager" | "accountant" | "staff";
 
 export type CarStatus = "preparing" | "in_stock" | "reserved" | "sold";
 
@@ -83,12 +83,22 @@ export interface Profile {
   tenant_id: string | null;
   role: Role;
   name: string | null;
-  // 業務權限開關（RBAC）：只對 role === "staff" 有意義，tenant_admin /
-  // super_admin 一律視為全部 true——不要直接讀這三欄做權限判斷，一律透過
-  // src/lib/permissions.ts 的 getEffectivePermissions() 取得實際生效的權限。
+  // 業務權限開關（RBAC）：只對「非老闆」角色（manager/accountant/staff）
+  // 有意義，tenant_admin / super_admin 一律視為全部 true——不要直接讀這六欄
+  // 做權限判斷，一律透過 src/lib/permissions.ts 的 getEffectivePermissions()
+  // 取得實際生效的權限。角色（role）決定邀請/切換角色當下套用的預設值
+  // （見 permissions.ts 的 ROLE_DEFAULT_PERMISSIONS），之後老闆還能針對
+  // 個別員工再微調這六個開關，不受角色限制。
   can_view_cost: boolean;
   can_view_salary: boolean;
   can_edit_cars: boolean;
+  /** 可以看到全體員工的薪資／抽成明細（不只自己），給「業務薪資」
+   * 「薪資單」模組用。 */
+  can_view_all_salary: boolean;
+  /** 可以審核（核准/退回）維修與美容請款——扮演「會計審核」角色。 */
+  can_approve_repairs: boolean;
+  /** 可以使用「會計與財務管理」頁面（公司開銷、資金總覽、淨利分潤試算）。 */
+  can_manage_finance: boolean;
   /** 公開展示用的個人電話，員工自己在「我的公開聯繫方式」分頁填寫，選填。 */
   public_phone: string | null;
   /** 公開展示用的個人 LINE ID，同上。 */
