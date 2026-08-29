@@ -20,8 +20,17 @@ export type StaffAccount = {
 } & Partial<StaffPermissionFlags>;
 
 /** 帳號與權限管理頁可指派的四個角色，跟 staff-actions.ts 的
- * MANAGEABLE_ROLES 一致（super_admin 不會出現在這個列表）。 */
-const ASSIGNABLE_ROLES: Extract<Role, "tenant_admin" | "manager" | "accountant" | "staff">[] = [
+ * MANAGEABLE_ROLES 一致（super_admin 不會出現在這個列表）。
+ * 獨立取出這個型別別名（而不是每個用到的地方都直接寫 Role）是因為
+ * ROLE_DEFAULT_PERMISSIONS 只認得這四種角色——如果拿完整的 Role（多了
+ * super_admin）去挑出「不是 tenant_admin 的角色」，TypeScript 縮寫出來的
+ * 型別會是 "super_admin" | "manager" | "accountant" | "staff"，拿去查
+ * ROLE_DEFAULT_PERMISSIONS 這個 Record 會報 TS7053（super_admin 這個
+ * key 在那個 Record 裡本來就不存在，理論上也不會真的传進来，但型別系統
+ * 不知道），導致 Vercel build 直接失敗。 */
+type AssignableRole = Extract<Role, "tenant_admin" | "manager" | "accountant" | "staff">;
+
+const ASSIGNABLE_ROLES: AssignableRole[] = [
   "tenant_admin",
   "manager",
   "accountant",
@@ -146,7 +155,7 @@ function InviteStaffForm() {
   const [open, setOpen] = useState(false);
   const [resetKey, setResetKey] = useState(0);
   const [state, formAction, pending] = useActionState(inviteStaffMember, inviteInitialState);
-  const [role, setRole] = useState<Role>("staff");
+  const [role, setRole] = useState<AssignableRole>("staff");
   const [permissions, setPermissions] = useState<StaffPermissionFlags>(ROLE_DEFAULT_PERMISSIONS.staff);
 
   useEffect(() => {
@@ -157,7 +166,7 @@ function InviteStaffForm() {
     }
   }, [state]);
 
-  function handleRoleChange(next: Role) {
+  function handleRoleChange(next: AssignableRole) {
     setRole(next);
     setPermissions(next === "tenant_admin" ? EMPTY_PERMISSIONS : ROLE_DEFAULT_PERMISSIONS[next]);
   }
@@ -206,7 +215,7 @@ function InviteStaffForm() {
           <select
             name="role"
             value={role}
-            onChange={(e) => handleRoleChange(e.target.value as Role)}
+            onChange={(e) => handleRoleChange(e.target.value as AssignableRole)}
             className={INPUT_CLASS}
           >
             {ASSIGNABLE_ROLES.map((r) => (
@@ -298,7 +307,7 @@ function StaffRow({
   const [, startRoleTransition] = useTransition();
   const [, startPermTransition] = useTransition();
 
-  function handleRoleChange(role: Role) {
+  function handleRoleChange(role: AssignableRole) {
     const prev = { ...staff };
     // 樂觀更新：角色跟六個權限開關一起改成新角色的預設值，跟
     // staff-actions.ts 的 updateStaffRole() 伺服器端行為一致，畫面才不會
@@ -363,7 +372,7 @@ function StaffRow({
           {canManage ? (
             <select
               value={staff.role}
-              onChange={(e) => handleRoleChange(e.target.value as Role)}
+              onChange={(e) => handleRoleChange(e.target.value as AssignableRole)}
               className="rounded-lg border border-neutral-200 bg-neutral-50 px-2 py-1 text-xs text-neutral-700 outline-none focus:border-[#BFA074]"
             >
               {ASSIGNABLE_ROLES.map((r) => (
