@@ -99,8 +99,19 @@ export async function createDeal(
   // 步，業務不能自己直接把新合約建成已交車——前端的合約狀態下拉選單
   // 已經把這個選項藏起來（見 deal-form-modal.tsx 的 availableStatusOptions），
   // 這裡是伺服器端不可被繞過的第二道防線。
-  if (values.status === "delivered" && !permissions.canManageFinance) {
-    return { error: "只有會計或老闆能把合約標記為「已交車」，請先送交會計確認稅金與業務抽成。" };
+  if (values.status === "delivered") {
+    if (!permissions.canManageFinance) {
+      return { error: "只有會計或老闆能把合約標記為「已交車」，請先送交會計確認稅金與業務抽成。" };
+    }
+    // 2026-08-30 修正：前端 deal-form-modal.tsx 原本的送出前檢查看的是
+    // 試算小工具的暫存欄位，不是真正會存進資料庫的 commission_amount，
+    // 有繞過空間（填了試算欄位卻忘記按「帶入」）。這裡補上伺服器端的
+    // 真正防線：一律直接檢查 values.commission_amount 這個要寫進資料庫
+    // 的值本身，不可為 null，才能保證「已交車」的合約一定有抽成數字
+    // 可用，前端沒擋到的情況這裡一定會擋下來。
+    if (values.commission_amount == null) {
+      return { error: "合約標記為「已交車」之前，請先填寫業務抽成金額（沒有的話可以填 0）。" };
+    }
   }
 
   const supabase = await createClient();
@@ -147,10 +158,18 @@ export async function updateDeal(
   // 一次資料庫裡這張合約「原本」是不是已經是已交車——如果原本就是，允許
   // 業務照舊存檔其他欄位（例如訂正客戶電話），不會因為這次改動被擋下來；
   // 只有「這次才要把狀態改成已交車」而且沒有這個權限，才會被擋。
-  if (values.status === "delivered" && !permissions.canManageFinance) {
+  if (values.status === "delivered") {
     const { data: existingDeal } = await supabase.from("deals").select("status").eq("id", id).maybeSingle();
-    if (existingDeal?.status !== "delivered") {
+    const alreadyDelivered = existingDeal?.status === "delivered";
+    if (!permissions.canManageFinance && !alreadyDelivered) {
       return { error: "只有會計或老闆能把合約標記為「已交車」，請先送交會計確認稅金與業務抽成。" };
+    }
+    // 2026-08-30 修正：跟 createDeal 一樣補上伺服器端的真正防線——只在
+    // 「這次才第一次變成已交車」才要求 commission_amount 有值，已經是
+    // 已交車的舊合約重新存檔（例如訂正電話）不受影響，避免擋到合法的
+    // 後續編輯。
+    if (!alreadyDelivered && values.commission_amount == null) {
+      return { error: "合約標記為「已交車」之前，請先填寫業務抽成金額（沒有的話可以填 0）。" };
     }
   }
 

@@ -524,7 +524,17 @@ export async function updateCar(
  * 設為已預訂）完全不受影響。
  */
 export async function updateCarStatus(carId: string, status: CarStatus, finalPrice?: number) {
-  await requireTenantUser();
+  const { profile } = await requireTenantUser();
+
+  // 2026-08-30 修正：這支「快捷切換車輛狀態」的 action 原本漏掉權限檢查
+  // ——只驗證有沒有登入，沒有像 createCar/updateCar/deleteCar 一樣確認
+  // canEditCars。前端雖然只在有權限的人畫面上才會出現這些快捷按鈕，但
+  // 後端沒擋的話，任何登入的車行成員（包含被明確關掉「編輯車輛」權限的
+  // 會計、一般員工）都能直接呼叫這支 action 把車輛標記已售出、寫入結帳
+  // 快照，這裡補上跟其他車輛異動 action 一致的後端第二道防線。
+  if (!getEffectivePermissions(profile).canEditCars) {
+    return { error: "沒有權限編輯車輛狀態，請聯繫車行管理員開啟「新增/編輯車輛資料」權限。" };
+  }
 
   if (!VALID_STATUSES.includes(status)) {
     return { error: "車輛狀態不正確。" };
