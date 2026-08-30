@@ -6,6 +6,7 @@ import { CarCard } from "./car-card";
 export function CarGallery({
   cars,
   canViewCost,
+  canViewCommission,
   canEditCars,
   repairCostByCar,
   showCost,
@@ -14,6 +15,8 @@ export function CarGallery({
 }: {
   cars: Car[];
   canViewCost: boolean;
+  /** 業務抽成屬於薪資隱私，是否顯示見 car-card.tsx 的說明。 */
+  canViewCommission: boolean;
   canEditCars: boolean;
   /** 每輛車已核准撥款的整備維修費用加總，見 cars-manager.tsx 的
    * computeApprovedPrepCostByCar()。 */
@@ -43,6 +46,7 @@ export function CarGallery({
           key={car.id}
           car={car}
           canViewCost={canViewCost}
+          canViewCommission={canViewCommission}
           canEditCars={canEditCars}
           repairCost={repairCostByCar.get(car.id) ?? 0}
           showCost={showCost}

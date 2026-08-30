@@ -20,6 +20,7 @@ export function CarDetailModal({
   car,
   canReview,
   canViewCost,
+  canViewCommission,
   canEditCars,
   tenantName,
   repairItems,
@@ -35,6 +36,15 @@ export function CarDetailModal({
   canReview: boolean;
   /** 收購進價/過戶費/整理美容/整備維修/底價/最終成交價都算敏感成本資訊。 */
   canViewCost: boolean;
+  /** 2026-08-30 新增：這輛車已結帳封存的「業務抽成」（closed_commission_cost）
+   * 本質上是某位業務同仁的薪資資訊，不能只靠 canViewCost 就看得到——
+   * 預設會看得到成本的店長、或被個別開放 canViewCost 的一般員工，都不該
+   * 因此連帶看到別人的抽成。這裡改成獨立的權限開關，只有「看得到全體
+   * 薪資」（canViewAllSalary）或「會計/財務管理」（canManageFinance）
+   * 才會是 true（見 cars-manager.tsx 怎麼算這個值）。canViewCost 是
+   * 「能不能看成本結構這個區塊」，canViewCommission 是「這個區塊裡的
+   * 抽成金額能不能再進一步看到」，兩者互相獨立，缺一都看不到。 */
+  canViewCommission: boolean;
   canEditCars: boolean;
   tenantName?: string;
   repairItems: RepairItem[];
@@ -89,14 +99,24 @@ export function CarDetailModal({
   // 只有已經售出的車輛才會有值，見 cars-actions.ts computeClosingFields()
   // 的說明。直接讀車輛本身的欄位，不需要另外把 deals 資料傳進這個
   // 元件——結完帳的數字本來就不會再變動，讀快照即可。
-  const totalSpent =
+  //
+  // 2026-08-30：安安反映業務抽成是薪資隱私，不希望其他員工從「車輛總
+  // 成本」這個合計反推出來——所以這裡拆成 operatingSpent（收購進價＋
+  // 過戶費/規費＋稅金＋已核准整備/美容/其他，不含抽成）跟 commissionCost
+  // 兩塊，只有 canViewCommission 才把抽成併入顯示用的 totalSpent，否則
+  // 合計就完全不含抽成，也不會另外顯示抽成那一行，避免看得到成本、但
+  // 看不到全體薪資的人（例如預設的店長）能用「合計 − 已知項目」反推出
+  // 抽成金額。
+  const operatingSpent =
     Number(car.purchase_price) +
     Number(car.transfer_fee ?? 0) +
     Number(car.tax_amount ?? 0) +
-    Number(car.closed_commission_cost ?? 0) +
     approvedRepairCost +
     approvedDetailingCost +
     approvedOtherCost;
+  const commissionCost = Number(car.closed_commission_cost ?? 0);
+  const showCommission = canViewCost && canViewCommission && car.closed_commission_cost != null;
+  const totalSpent = operatingSpent + (showCommission ? commissionCost : 0);
 
   function handleQuickStatus(status: Car["status"]) {
     // 「設為已售出」原本只改狀態，完全不會問成交價，導致「定價」區塊的
@@ -315,7 +335,9 @@ export function CarDetailModal({
             {canViewCost ? (
               <div className="mb-3 rounded-xl bg-[#BFA074]/10 p-3">
                 <p className="text-[11px] text-neutral-500">
-                  車輛總成本（收購進價 + 過戶費/規費 + 稅金 + 業務抽成 + 已核准整備維修/美容/其他）
+                  {showCommission
+                    ? "車輛總成本（收購進價 + 過戶費/規費 + 稅金 + 業務抽成 + 已核准整備維修/美容/其他）"
+                    : "車輛總成本（收購進價 + 過戶費/規費 + 稅金 + 已核准整備維修/美容/其他，不含業務抽成）"}
                 </p>
                 <p className="mt-0.5 text-xl font-bold tabular-nums text-[#A6793D]">
                   {formatCurrency(totalSpent)}
@@ -330,8 +352,8 @@ export function CarDetailModal({
               <Money label="收購進價" value={car.purchase_price} mask={!canViewCost} />
               <Money label="過戶費/規費" value={car.transfer_fee} mask={!canViewCost} />
               <Money label="稅金/發票稅金" value={car.tax_amount} mask={!canViewCost} />
-              {car.closed_commission_cost != null && (
-                <Money label="業務抽成（結帳封存）" value={car.closed_commission_cost} mask={!canViewCost} />
+              {showCommission && (
+                <Money label="業務抽成（結帳封存）" value={car.closed_commission_cost} />
               )}
               <Money label="整備維修成本（已核准）" value={approvedRepairCost} mask={!canViewCost} />
               <Money label="整理美容成本（已核准）" value={approvedDetailingCost} mask={!canViewCost} />

@@ -90,6 +90,14 @@ export function CarsManager({
       // true，不影響其他功能。
     }
   }, []);
+  // 2026-08-30 新增：業務抽成（已結帳車輛的 closed_commission_cost）是
+  // 薪資隱私，不能只靠 canViewCost 判斷要不要顯示——預設看得到成本的
+  // 店長、或被個別開放 canViewCost 的一般員工，不該連帶看到別人的抽成。
+  // 只有「看得到全體薪資」（canViewAllSalary，會計/老闆預設有）或
+  // 「會計/財務管理」（canManageFinance）才看得到，見 car-card.tsx／
+  // car-detail-modal.tsx 怎麼用這個值。
+  const canViewCommission = permissions.canViewAllSalary || permissions.canManageFinance;
+
   function toggleShowCostOnCards() {
     setShowCostOnCards((prev) => {
       const next = !prev;
@@ -266,6 +274,7 @@ export function CarsManager({
               <CarGallery
                 cars={filteredCars}
                 canViewCost={permissions.canViewCost}
+                canViewCommission={canViewCommission}
                 canEditCars={permissions.canEditCars}
                 repairCostByCar={repairCostByCar}
                 showCost={showCostOnCards}
@@ -282,6 +291,7 @@ export function CarsManager({
           car={modalState.car}
           canReview={permissions.canApproveRepairs}
           canViewCost={permissions.canViewCost}
+          canViewCommission={canViewCommission}
           canEditCars={permissions.canEditCars}
           tenantName={tenantName}
           repairItems={repairItems.filter((r) => r.car_id === modalState.car.id)}

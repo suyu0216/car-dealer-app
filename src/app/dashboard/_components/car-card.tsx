@@ -10,6 +10,7 @@ import { CarQuickActions } from "./car-quick-actions";
 export function CarCard({
   car,
   canViewCost,
+  canViewCommission,
   canEditCars,
   repairCost,
   showCost,
@@ -18,6 +19,13 @@ export function CarCard({
 }: {
   car: Car;
   canViewCost: boolean;
+  /** 2026-08-30 新增：這輛車已結帳封存的「業務抽成」（closed_commission_cost）
+   * 是某位業務同仁的薪資資訊，不能只靠 canViewCost 就看得到——預設會
+   * 看得到成本的店長、或被個別開放 canViewCost 的一般員工，都不該因此
+   * 連帶看到別人的抽成金額。只有「看得到全體薪資」（canViewAllSalary）
+   * 或「會計/財務管理」（canManageFinance）才會是 true，見 cars-manager.tsx
+   * 怎麼算這個值。 */
+  canViewCommission: boolean;
   canEditCars: boolean;
   /** 這輛車已核准撥款的整備維修費用加總，見 cars-manager.tsx 的
    * computeApprovedPrepCostByCar()。 */
@@ -33,25 +41,30 @@ export function CarCard({
 }) {
   // 2026-08-30：安安反映「成本＋開銷」合在一起看不出來開銷實際花多少，
   // 希望拆成「成本」（收購進價，進貨要花的錢）跟「開銷」（其他所有支出）
-  // 分開顯示，再顯示一次總和。拆法：
-  //   成本 = 收購進價（car.purchase_price，車輛結帳前後都不會變）
-  //   總計 = 跟原本「成本＋開銷」欄位算法完全一樣（車輛已結帳封存就讀
-  //          closed_total_cost 快照，否則即時算收購價＋已核准整備費＋
-  //          規費＋稅金，見 cars-kpi.tsx／car-maintenance-tab.tsx／
-  //          analytics-module.tsx 的同一套公式）
-  //   開銷 = 總計 − 成本（未結帳＝已核准整備費＋規費＋稅金；已結帳的話
-  //          closed_total_cost 本身連業務抽成都封存進去了，所以已結帳
-  //          車輛的「開銷」這裡也會連帶包含業務抽成，下面的說明文字會
-  //          依結帳與否顯示不同的括號備註，避免看起來兜不起來）。
-  // 用「總計 − 成本」反推「開銷」而不是另外重新加總一次，可以保證
-  // 「成本 + 開銷 = 總計」一定成立，不會因為兩邊各自计算而兜不起來。
+  // 分開顯示，再顯示一次總和。
+  //
+  // 同一天安安又反映：已結帳車輛的「開銷」裡面藏著業務抽成，抽成是
+  // 薪資隱私，不該讓看得到成本、但看不到全體薪資的人（例如預設的店長）
+  // 從這裡看到、甚至反推出某個業務同仁抽成多少——所以再拆一層：
+  //   成本 purchaseCost = 收購進價（car.purchase_price）
+  //   抽成 commissionCost = 已結帳車輛的 closed_commission_cost，未結帳
+  //          車輛一律是 0（deal 還沒交車結案，也就還沒有抽成快照）
+  //   開銷 operatingCost = 純粹的整備＋規費＋稅金，不含抽成——未結帳即時
+  //          算 repairCost＋transfer_fee＋tax_amount；已結帳則用
+  //          closed_total_cost 反推：closed_total_cost 本身 = 成本＋開銷
+  //          ＋抽成，所以 開銷 = closed_total_cost − 成本 − 抽成
+  //   顯示的合計 visibleTotal = 成本 ＋ 開銷 ＋（有權限才加）抽成——沒有
+  //          canViewCommission 的人，合計就完全不含抽成，不會露出任何
+  //          能讓人用「合計－已知項目」反推出抽成的線索。
   const purchaseCost = Number(car.purchase_price);
-  const totalCost =
+  const commissionCost = car.closed_at != null ? Number(car.closed_commission_cost ?? 0) : 0;
+  const operatingCost =
     car.closed_at != null
-      ? Number(car.closed_total_cost ?? 0)
-      : purchaseCost + repairCost + Number(car.transfer_fee ?? 0) + Number(car.tax_amount ?? 0);
-  const expenseCost = totalCost - purchaseCost;
-  const expenseLabel = car.closed_at != null ? "開銷（整備＋規費＋稅金＋業務抽成）" : "開銷（整備＋規費＋稅金）";
+      ? Number(car.closed_total_cost ?? 0) - purchaseCost - commissionCost
+      : repairCost + Number(car.transfer_fee ?? 0) + Number(car.tax_amount ?? 0);
+  const showCommission = canViewCommission && commissionCost > 0;
+  const visibleTotal = purchaseCost + operatingCost + (showCommission ? commissionCost : 0);
+  const totalLabel = showCommission ? "成本＋開銷＋抽成合計" : "成本＋開銷合計";
   return (
     // 2026-08-30：「藝廊卡片」改成大圖卡片——圖片區域從 16/10 拉高到
     // 4/3，讓照片占卡片的比例明顯變大；標題、價格字級也一併放大，
@@ -112,14 +125,22 @@ export function CarCard({
                   </span>
                 </div>
                 <div className="flex items-center justify-between gap-3 text-xs text-neutral-500">
-                  <span>{expenseLabel}</span>
+                  <span>開銷（整備＋規費＋稅金）</span>
                   <span className="font-medium tabular-nums text-neutral-700">
-                    {formatCurrency(expenseCost)}
+                    {formatCurrency(operatingCost)}
                   </span>
                 </div>
+                {showCommission && (
+                  <div className="flex items-center justify-between gap-3 text-xs text-neutral-500">
+                    <span>業務抽成</span>
+                    <span className="font-medium tabular-nums text-neutral-700">
+                      {formatCurrency(commissionCost)}
+                    </span>
+                  </div>
+                )}
                 <div className="flex items-center justify-between gap-3 border-t border-neutral-200 pt-1 text-xs font-semibold text-neutral-800">
-                  <span>成本＋開銷合計</span>
-                  <span className="tabular-nums text-[#A6793D]">{formatCurrency(totalCost)}</span>
+                  <span>{totalLabel}</span>
+                  <span className="tabular-nums text-[#A6793D]">{formatCurrency(visibleTotal)}</span>
                 </div>
               </div>
             )}
