@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useMemo, useRef, useState } from "react";
+import { useActionState, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { createDeal, updateDeal, type DealFormState } from "../deals-actions";
 import { useUnsavedChangesGuard } from "./use-unsaved-changes-guard";
 import { CASH_POOL_METHOD_OPTIONS } from "@/lib/cash-pool";
@@ -72,12 +72,23 @@ export function DealFormModal({
   // 價－總成本」才是這台車真正的淨利；她想用這個淨利，再扣掉「我們平常
   // 的稅金」（她自己填，可以填百分比、也可以直接填固定金額），算出稅後
   // 淨利，接著用同一套「百分比／固定金額」兩種填法，決定業務這筆的薪水／
-  // 抽成建議金額。這個小工具完全是選填的即時試算，算出來的建議金額只是
-  // 「帶入」到下面本來就有的「預估抽成」欄位，不會自動覆蓋、也不會單獨
-  // 存進資料庫——deals 表只認「預估抽成」那個數字，試算過程的稅金/抽成
-  // 比例只是幫忙算這個數字用的計算機，不影響既有的資料結構跟其他地方的
-  // 邏輯。canSetCommission 之外的人本來就看不到這整個區塊。
-  const [showCalculator, setShowCalculator] = useState(false);
+  // 抽成建議金額。算出來的建議金額只是「帶入」到下面本來就有的「預估
+  // 抽成」欄位，不會自動覆蓋、也不會單獨存進資料庫——deals 表只認「預估
+  // 抽成」那個數字，試算過程的稅金/抽成比例只是幫忙算這個數字用的計算機，
+  // 不影響既有的資料結構跟其他地方的邏輯。canSetCommission 之外的人本來
+  // 就看不到這整個區塊。
+  //
+  // 2026-08-30 第二次確認：(1) 只要選好車、填了成交價，這個試算區塊
+  // 要自動跳出來，不用再手動點開／收起，見下面 JSX 直接用
+  // `!selectedCar || revenue == null` 判斷要不要顯示內容，拿掉了原本的
+  // showCalculator 開關；(2) 合約狀態要從草約/已簽約改成「已交車」的那
+  // 一刻，稅金／業務抽成至少都要填過一次（可以直接填 0，不強制要有實際
+  // 金額，只是不能整個空著），否則擋住不讓存檔——見下面 handleSubmit()。
+  // 已經是「已交車」的舊合約，之後編輯其他欄位重新存檔不會被回頭要求
+  // 補填，只在「這次才要把狀態改成已交車」的那個瞬間才檢查，避免舊資料
+  // 被卡住存不了檔。
+  const [validationError, setValidationError] = useState<string | null>(null);
+  const previousStatus = deal?.status ?? null;
   const [taxMode, setTaxMode] = useState<"percent" | "amount">("amount");
   const [taxPercent, setTaxPercent] = useState("");
   const [taxFixed, setTaxFixed] = useState("");
@@ -140,6 +151,30 @@ export function DealFormModal({
     commissionInputRef.current.value = String(Math.round(suggestedCommission));
   }
 
+  // 送出表單前的檢查：只有「這次才要把合約狀態改成已交車」（草約/已簽約
+  // → 已交車，或新增合約直接選已交車）才需要檢查；已經是已交車的舊合約
+  // 重新存檔（例如只是訂正客戶電話）不受影響。用 FormData 直接讀當下
+  // <select name="status"> 的值，不用把它額外改成 controlled。
+  function handleSubmit(e: FormEvent<HTMLFormElement>) {
+    setValidationError(null);
+    if (!canSetCommission) return;
+
+    const formData = new FormData(e.currentTarget);
+    const nextStatus = String(formData.get("status") ?? "draft");
+    if (nextStatus !== "delivered" || previousStatus === "delivered") return;
+
+    const taxFilled = taxMode === "percent" ? taxPercent.trim() !== "" : taxFixed.trim() !== "";
+    const commissionFilled =
+      commissionMode === "percent" ? commissionPercent.trim() !== "" : commissionFixed.trim() !== "";
+
+    if (!taxFilled || !commissionFilled) {
+      e.preventDefault();
+      setValidationError(
+        "合約狀態要改成「已交車」之前，請先在下面「🧮 業務薪水試算」把「我們平常的稅金」與「業務抽成」都填上數字（沒有的話可以填 0），至少要填過一次。"
+      );
+    }
+  }
+
   return (
     // 背景不綁 onClick，避免點外面誤觸清掉表單。
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-900/50 px-4 py-8">
@@ -156,7 +191,7 @@ export function DealFormModal({
           </button>
         </div>
 
-        <form action={formAction} onChange={markDirty} className="mt-4 space-y-4">
+        <form action={formAction} onChange={markDirty} onSubmit={handleSubmit} className="mt-4 space-y-4">
           {mode === "edit" && deal && <input type="hidden" name="id" value={deal.id} />}
           <input type="hidden" name="customer_id" value={customerId} />
 
@@ -313,88 +348,83 @@ export function DealFormModal({
                 />
               </div>
 
-              <button
-                type="button"
-                onClick={() => setShowCalculator((v) => !v)}
-                className="mt-2 text-xs font-medium text-[#A6793D] hover:underline"
-              >
-                {showCalculator ? "收起試算小工具 ▲" : "🧮 用淨利算業務薪水（選填小工具） ▼"}
-              </button>
+              {/* 2026-08-30：試算小工具原本預設收起來、要手動點開——安安
+                  希望只要選好車、填了成交價就自動跳出來，不用再多點一次，
+                  這裡拿掉了原本的 showCalculator 開關，直接依有沒有選好
+                  車／填好成交價決定顯示內容。 */}
+              <div className="mt-2 space-y-3 rounded-xl border border-neutral-200 bg-[#F8F9FA] p-3.5 text-sm">
+                <h4 className="text-xs font-semibold text-neutral-600">🧮 業務薪水試算</h4>
+                {!selectedCar || revenue == null ? (
+                  <p className="text-xs text-neutral-400">請先選好車輛、填好成交價，這裡會自動跳出試算。</p>
+                ) : (
+                  <>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-neutral-500">
+                        稅前淨利（成交價 − 收購價/整備費/規費/稅金的總成本）
+                      </span>
+                      <span
+                        className={
+                          "font-semibold tabular-nums " +
+                          (preTaxProfit != null && preTaxProfit < 0 ? "text-[#B75454]" : "text-neutral-800")
+                        }
+                      >
+                        {preTaxProfit != null ? formatCurrency(preTaxProfit) : "—"}
+                      </span>
+                    </div>
 
-              {showCalculator && (
-                <div className="mt-2 space-y-3 rounded-xl border border-neutral-200 bg-[#F8F9FA] p-3.5 text-sm">
-                  {!selectedCar || revenue == null ? (
-                    <p className="text-xs text-neutral-400">請先選好車輛、填好成交價，才能試算。</p>
-                  ) : (
-                    <>
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs text-neutral-500">
-                          稅前淨利（成交價 − 收購價/整備費/規費/稅金的總成本）
-                        </span>
-                        <span
-                          className={
-                            "font-semibold tabular-nums " +
-                            (preTaxProfit != null && preTaxProfit < 0 ? "text-[#B75454]" : "text-neutral-800")
-                          }
-                        >
-                          {preTaxProfit != null ? formatCurrency(preTaxProfit) : "—"}
-                        </span>
+                    <RateOrAmountRow
+                      label="我們平常的稅金"
+                      mode={taxMode}
+                      onModeChange={setTaxMode}
+                      percentValue={taxPercent}
+                      onPercentChange={setTaxPercent}
+                      amountValue={taxFixed}
+                      onAmountChange={setTaxFixed}
+                      percentPlaceholder="例如 5（＝稅前淨利的 5%）"
+                      amountPlaceholder="沒有稅金可以填 0"
+                    />
+
+                    <div className="flex items-center justify-between border-t border-neutral-200 pt-2.5">
+                      <span className="text-xs text-neutral-500">稅後淨利</span>
+                      <span className="font-semibold tabular-nums text-neutral-800">
+                        {afterTaxProfit != null ? formatCurrency(afterTaxProfit) : "—"}
+                      </span>
+                    </div>
+
+                    <RateOrAmountRow
+                      label="業務抽成"
+                      mode={commissionMode}
+                      onModeChange={setCommissionMode}
+                      percentValue={commissionPercent}
+                      onPercentChange={setCommissionPercent}
+                      amountValue={commissionFixed}
+                      onAmountChange={setCommissionFixed}
+                      percentPlaceholder="例如 30（＝稅後淨利的 30%）"
+                      amountPlaceholder="沒有抽成可以填 0"
+                    />
+
+                    <div className="flex items-center justify-between gap-3 border-t border-neutral-200 pt-2.5">
+                      <div>
+                        <p className="text-xs text-neutral-500">建議薪水金額</p>
+                        <p className="text-lg font-semibold tabular-nums text-[#A6793D]">
+                          {suggestedCommission != null ? formatCurrency(suggestedCommission) : "—"}
+                        </p>
                       </div>
-
-                      <RateOrAmountRow
-                        label="我們平常的稅金"
-                        mode={taxMode}
-                        onModeChange={setTaxMode}
-                        percentValue={taxPercent}
-                        onPercentChange={setTaxPercent}
-                        amountValue={taxFixed}
-                        onAmountChange={setTaxFixed}
-                        percentPlaceholder="例如 5（＝稅前淨利的 5%）"
-                        amountPlaceholder="例如 3000"
-                      />
-
-                      <div className="flex items-center justify-between border-t border-neutral-200 pt-2.5">
-                        <span className="text-xs text-neutral-500">稅後淨利</span>
-                        <span className="font-semibold tabular-nums text-neutral-800">
-                          {afterTaxProfit != null ? formatCurrency(afterTaxProfit) : "—"}
-                        </span>
-                      </div>
-
-                      <RateOrAmountRow
-                        label="業務抽成"
-                        mode={commissionMode}
-                        onModeChange={setCommissionMode}
-                        percentValue={commissionPercent}
-                        onPercentChange={setCommissionPercent}
-                        amountValue={commissionFixed}
-                        onAmountChange={setCommissionFixed}
-                        percentPlaceholder="例如 30（＝稅後淨利的 30%）"
-                        amountPlaceholder="例如 8000"
-                      />
-
-                      <div className="flex items-center justify-between gap-3 border-t border-neutral-200 pt-2.5">
-                        <div>
-                          <p className="text-xs text-neutral-500">建議薪水金額</p>
-                          <p className="text-lg font-semibold tabular-nums text-[#A6793D]">
-                            {suggestedCommission != null ? formatCurrency(suggestedCommission) : "—"}
-                          </p>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={applySuggestedCommission}
-                          disabled={suggestedCommission == null}
-                          className="rounded-lg bg-[#BFA074] px-3 py-1.5 text-xs font-medium text-white transition hover:bg-[#AD9066] disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          帶入上方抽成欄位
-                        </button>
-                      </div>
-                      <p className="text-[11px] text-neutral-400">
-                        這裡只是幫忙算數字，帶入之後上方欄位仍然可以手動調整，實際存檔以「預估抽成」欄位的數字為準。
-                      </p>
-                    </>
-                  )}
-                </div>
-              )}
+                      <button
+                        type="button"
+                        onClick={applySuggestedCommission}
+                        disabled={suggestedCommission == null}
+                        className="rounded-lg bg-[#BFA074] px-3 py-1.5 text-xs font-medium text-white transition hover:bg-[#AD9066] disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        帶入上方抽成欄位
+                      </button>
+                    </div>
+                    <p className="text-[11px] text-neutral-400">
+                      這裡只是幫忙算數字，帶入之後上方欄位仍然可以手動調整，實際存檔以「預估抽成」欄位的數字為準。合約狀態要改成「已交車」之前，稅金與業務抽成至少都要填過一次（可以填 0）。
+                    </p>
+                  </>
+                )}
+              </div>
             </div>
           )}
 
@@ -417,6 +447,12 @@ export function DealFormModal({
           {state?.error && (
             <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600 ring-1 ring-inset ring-red-100">
               {state.error}
+            </p>
+          )}
+
+          {validationError && (
+            <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600 ring-1 ring-inset ring-red-100">
+              {validationError}
             </p>
           )}
 
