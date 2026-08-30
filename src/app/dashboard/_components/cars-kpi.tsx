@@ -42,24 +42,22 @@ export function CarsKpi({
   const inventoryCount = inventoryCars.length;
 
   const inventoryCost = inventoryCars.reduce((sum, c) => sum + totalCost(c), 0);
-  const inventoryAskTotal = inventoryCars.reduce(
-    (sum, c) => sum + Number(c.selling_price ?? 0),
-    0
-  );
   // 2026-08-30：「預估毛利空間」這張卡片依使用者要求拿掉——理由跟
   // analytics-module.tsx 拿掉「場內預估毛利」一樣：車輛都還沒賣出就先用
   // 「假設現在開價全部賣掉」估一個毛利數字，容易被誤讀成已經確定能賺到
   // 的錢，不再計算這個估算值。
+  // 2026-08-30：「開價總額」這張卡片依使用者要求也拿掉，同樣不再計算
+  // inventoryAskTotal——原因跟「預估毛利空間」一樣：把「還沒賣掉的車全部
+  // 開價加總」放在這裡，容易被誤讀成確定能收到的錢。
 
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+    <div className="grid grid-cols-2 gap-3">
       <KpiCard label="在庫車輛總數" value={`${inventoryCount} 輛`} />
       <KpiCard
         label="庫存總成本"
         value={canViewCost ? formatCurrency(inventoryCost) : "🔒 權限不足"}
         sub={canViewCost ? "收購+已核准整備費+規費+稅金" : undefined}
       />
-      <KpiCard label="開價總額" value={formatCurrency(inventoryAskTotal)} />
     </div>
   );
 }
