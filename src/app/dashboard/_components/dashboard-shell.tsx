@@ -168,7 +168,9 @@ export function DashboardShell({
             staff={staff}
           />
         )}
-        {activeModule === "crm" && <CrmModule customers={customers} />}
+        {activeModule === "crm" && (
+          <CrmModule customers={customers} staff={staff} isTenantAdmin={permissions.canManageStaff} />
+        )}
         {activeModule === "tradeIns" && <TradeInModule tradeInRequests={tradeInRequests} />}
         {activeModule === "deals" && (
           // 2026-08-30：合約的「業務抽成／稅金」與「標記已交車」原本綁在

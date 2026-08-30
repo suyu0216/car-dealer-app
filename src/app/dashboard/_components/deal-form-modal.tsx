@@ -238,24 +238,44 @@ export function DealFormModal({
 
           <div>
             <label className="block text-sm font-medium text-neutral-700">選定車輛</label>
-            <select
-              name="car_id"
-              value={carId}
-              onChange={(e) => setCarId(e.target.value)}
-              required
-              className={INPUT_CLASS}
-            >
-              <option value="" disabled>
-                請選擇車輛
-              </option>
-              {cars.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.brand ? `${c.brand} ` : ""}
-                  {c.model_name}
-                  {c.license_plate ? `（${c.license_plate}）` : ""}
+            {mode === "create" ? (
+              <select
+                name="car_id"
+                value={carId}
+                onChange={(e) => setCarId(e.target.value)}
+                required
+                className={INPUT_CLASS}
+              >
+                <option value="" disabled>
+                  請選擇車輛
                 </option>
-              ))}
-            </select>
+                {cars.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.brand ? `${c.brand} ` : ""}
+                    {c.model_name}
+                    {c.license_plate ? `（${c.license_plate}）` : ""}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              // 2026-08-30：合約建立之後，車輛不可再被改成別台——這裡改成
+              // 唯讀顯示＋隱藏欄位固定送出原本的 car_id，不給互動式下拉選單，
+              // 前端這層是防呆；真正擋住惡意繞過前端直接改 car_id 的防線在
+              // deals-actions.ts 的 updateDeal()（伺服器端強制比對舊值）。
+              <>
+                <input type="hidden" name="car_id" value={carId} />
+                <div className={INPUT_CLASS + " cursor-not-allowed bg-neutral-100 text-neutral-500"}>
+                  {selectedCar
+                    ? `${selectedCar.brand ? `${selectedCar.brand} ` : ""}${selectedCar.model_name}${
+                        selectedCar.license_plate ? `（${selectedCar.license_plate}）` : ""
+                      }`
+                    : "—"}
+                </div>
+                <p className="mt-1 text-xs text-neutral-400">
+                  合約建立後車輛不可更改，如果簽錯車輛請聯繫車行管理員另外處理。
+                </p>
+              </>
+            )}
           </div>
 
           <div>
