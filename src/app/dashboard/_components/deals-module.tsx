@@ -25,7 +25,7 @@ export function DealsModule({
   cars,
   customers,
   staff,
-  canSetCommission,
+  canManageFinance,
   tenantName,
   repairItems,
 }: {
@@ -33,7 +33,10 @@ export function DealsModule({
   cars: Car[];
   customers: Customer[];
   staff: { id: string; name: string | null }[];
-  canSetCommission: boolean;
+  /** 只有老闆／會計（canManageFinance）能填業務抽成、用試算小工具、
+   * 把合約標記成「已交車」——業務只能把合約填到草約/已簽約，交給會計
+   * 結案，見 deal-form-modal.tsx 開頭的說明。 */
+  canManageFinance: boolean;
   tenantName?: string;
   /** 給「業務薪水試算小工具」算選中車輛的已核准整備費用，見
    * deal-form-modal.tsx 開頭的說明。 */
@@ -141,7 +144,7 @@ export function DealsModule({
           cars={cars}
           customers={customers}
           staff={staff}
-          canSetCommission={canSetCommission}
+          canManageFinance={canManageFinance}
           repairItems={repairItems}
           onClose={() => setModalState(null)}
         />

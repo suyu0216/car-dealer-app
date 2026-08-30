@@ -24,7 +24,7 @@ export function DealFormModal({
   customers,
   staff,
   repairItems,
-  canSetCommission,
+  canManageFinance,
   onClose,
 }: {
   mode: "create" | "edit";
@@ -33,11 +33,19 @@ export function DealFormModal({
   customers: Customer[];
   staff: { id: string; name: string | null }[];
   /** 「業務薪水試算小工具」算車輛已核准的維修整備費要用——只有
-   * canSetCommission（老闆）看得到這個試算工具，一般業務就算拿到這個
-   * prop 也看不到用不到，見下面的說明。 */
+   * canManageFinance 的人看得到這個試算工具，業務就算拿到這個 prop 也
+   * 看不到用不到，見下面的說明。 */
   repairItems: RepairItem[];
-  /** 只有車行管理員能填寫/修改業務抽成，避免一般業務球員兼裁判自己填。 */
-  canSetCommission: boolean;
+  /** 2026-08-30：合約流程是業務填寫送出（草約/已簽約），交給會計審核填
+   * 稅金/業務抽成、確認無誤後才把合約標記為「已交車」結案——不是老闆
+   * 自己一個個填，也不是業務自己填自己的抽成。所以這裡改用
+   * canManageFinance（老闆恆為 true，會計預設也是 true，店長/員工預設
+   * false）而不是原本的 canManageStaff，見 dashboard-shell.tsx 的說明。
+   * 這個權限同時控制：(1) 預估抽成欄位＋業務薪水試算小工具看不看得到、
+   * 填不填得了；(2) 下面「合約狀態」下拉選單裡看不看得到「已交車」這個
+   * 選項——沒有這個權限的人，合約狀態最多只能填到「已簽約」，「已交車」
+   * 要交給會計/老闆來標記，見下面 availableStatusOptions 的說明。 */
+  canManageFinance: boolean;
   onClose: () => void;
 }) {
   const action = mode === "create" ? createDeal : updateDeal;
@@ -75,7 +83,7 @@ export function DealFormModal({
   // 抽成建議金額。算出來的建議金額只是「帶入」到下面本來就有的「預估
   // 抽成」欄位，不會自動覆蓋、也不會單獨存進資料庫——deals 表只認「預估
   // 抽成」那個數字，試算過程的稅金/抽成比例只是幫忙算這個數字用的計算機，
-  // 不影響既有的資料結構跟其他地方的邏輯。canSetCommission 之外的人本來
+  // 不影響既有的資料結構跟其他地方的邏輯。canManageFinance 之外的人本來
   // 就看不到這整個區塊。
   //
   // 2026-08-30 第二次確認：(1) 只要選好車、填了成交價，這個試算區塊
@@ -87,6 +95,17 @@ export function DealFormModal({
   // 已經是「已交車」的舊合約，之後編輯其他欄位重新存檔不會被回頭要求
   // 補填，只在「這次才要把狀態改成已交車」的那個瞬間才檢查，避免舊資料
   // 被卡住存不了檔。
+  //
+  // 2026-08-30 第三次確認：安安反映合約是業務填寫送出、由「會計」審核
+  // 填稅金/抽成後才結案，不是老闆自己填、也不是業務自己填自己的抽成。
+  // 原本這整個區塊（含「合約狀態」能不能選「已交車」）都是綁
+  // canManageStaff（只有老闆）——現在改綁 canManageFinance（老闆恆為
+  // true，會計預設也是 true），業務（沒有這個權限）打開合約表單完全看
+  // 不到預估抽成／試算小工具，「合約狀態」下拉選單也只會看到「草約」
+  // 「已簽約」，選不到「已交車」——把合約填好、狀態改成「已簽約」就是
+  // 業務這端能做到的最後一步，要交給會計打開同一張合約、填好稅金/抽成
+  // 之後才能把狀態改成「已交車」結案。伺服器端（deals-actions.ts）也有
+  // 對應的權限檢查，不是只有前端擋。
   const [validationError, setValidationError] = useState<string | null>(null);
   const previousStatus = deal?.status ?? null;
   const [taxMode, setTaxMode] = useState<"percent" | "amount">("amount");
@@ -98,6 +117,18 @@ export function DealFormModal({
   const commissionInputRef = useRef<HTMLInputElement>(null);
 
   const selectedCar = useMemo(() => cars.find((c) => c.id === carId) ?? null, [cars, carId]);
+
+  // 「已交車」只有 canManageFinance（老闆/會計）能選——業務打開這個下拉
+  // 選單只會看到「草約」「已簽約」，沒辦法自己把合約標記成已交車結案。
+  // 例外：如果這張合約本來就已經是「已交車」（例如會計標記完之後，業務
+  // 之後又被找回來改客戶電話之類的小地方），保留這個選項讓 <select> 的
+  // value 對得上目前的狀態，不會因為選項消失而看起來像資料跑掉，但業務
+  // 依然無法把其他狀態「改成」已交車（下面 handleSubmit 對應的伺服器端
+  // 也有檢查，不是只擋前端）。
+  const availableStatusOptions = useMemo(
+    () => STATUS_OPTIONS.filter((opt) => opt.value !== "delivered" || canManageFinance || deal?.status === "delivered"),
+    [canManageFinance, deal?.status]
+  );
 
   // 車輛總成本＝收購價＋已核准維修整備費＋規費＋稅金，跟 cars-kpi.tsx／
   // car-maintenance-tab.tsx／analytics-module.tsx 是同一套公式，這裡不
@@ -157,7 +188,7 @@ export function DealFormModal({
   // <select name="status"> 的值，不用把它額外改成 controlled。
   function handleSubmit(e: FormEvent<HTMLFormElement>) {
     setValidationError(null);
-    if (!canSetCommission) return;
+    if (!canManageFinance) return;
 
     const formData = new FormData(e.currentTarget);
     const nextStatus = String(formData.get("status") ?? "draft");
@@ -326,10 +357,11 @@ export function DealFormModal({
             </div>
           </div>
 
-          {/* 業務抽成只有管理員能填——一般業務不開放自己填自己的抽成金額。
-              非管理員送出表單時這個欄位完全不會出現在 FormData 裡，
-              deals-actions.ts 那邊也會忽略任何非管理員帶上來的值，雙重防呆。 */}
-          {canSetCommission && (
+          {/* 業務抽成只有老闆/會計（canManageFinance）能填——業務不開放
+              自己填自己的抽成金額。非管理員送出表單時這個欄位完全不會
+              出現在 FormData 裡，deals-actions.ts 那邊也會忽略任何非
+              管理員帶上來的值，雙重防呆。 */}
+          {canManageFinance && (
             <div>
               <div>
                 <label htmlFor="commission_amount" className="block text-sm font-medium text-neutral-700">
@@ -431,12 +463,17 @@ export function DealFormModal({
           <div>
             <label className="block text-sm font-medium text-neutral-700">合約狀態</label>
             <select name="status" defaultValue={deal?.status ?? "draft"} className={INPUT_CLASS}>
-              {STATUS_OPTIONS.map((s) => (
+              {availableStatusOptions.map((s) => (
                 <option key={s.value} value={s.value}>
                   {s.label}
                 </option>
               ))}
             </select>
+            {!canManageFinance && (
+              <p className="mt-1 text-xs text-neutral-400">
+                「已交車」要交給會計/老闆確認稅金與業務抽成後才能標記，這裡最多只能填到「已簽約」。
+              </p>
+            )}
           </div>
 
           <div>

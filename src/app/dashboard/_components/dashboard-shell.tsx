@@ -171,12 +171,18 @@ export function DashboardShell({
         {activeModule === "crm" && <CrmModule customers={customers} />}
         {activeModule === "tradeIns" && <TradeInModule tradeInRequests={tradeInRequests} />}
         {activeModule === "deals" && (
+          // 2026-08-30：合約的「業務抽成／稅金」與「標記已交車」原本綁在
+          // canManageStaff（只有老闆）——安安反映合約流程是員工填寫送出、
+          // 由「會計」審核填稅金/抽成後才結案，不是老闆自己一個個填，
+          // 所以改成 canManageFinance（老闆恆為 true，會計預設也是
+          // true，店長/員工預設 false），見 deals-actions.ts 跟
+          // deal-form-modal.tsx 的說明。
           <DealsModule
             deals={deals}
             cars={cars}
             customers={customers}
             staff={staff}
-            canSetCommission={permissions.canManageStaff}
+            canManageFinance={permissions.canManageFinance}
             tenantName={tenantName}
             repairItems={repairItems}
           />
