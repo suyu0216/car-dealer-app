@@ -18,10 +18,12 @@ export function CarsKpi({
   /** 庫存總成本/預估毛利空間屬於敏感財務資訊，沒有這個權限就整卡遮罩。 */
   canViewCost: boolean;
 }) {
-  // 場內成本一律用「收購價 + 已核准維修整備費 + 規費」計算，跟每台車詳情頁
-  // 的財務損益卡（car-maintenance-tab.tsx）用同一套公式，不再讀舊版手動
-  // 填寫的 detailing_cost / repair_cost 欄位（那兩個已經被 repair_items
-  // 請款流程取代）。
+  // 場內成本一律用「收購價 + 已核准維修整備費 + 規費 + 稅金」計算，跟每台車
+  // 詳情頁的財務損益卡（car-maintenance-tab.tsx）用同一套公式，不再讀舊版
+  // 手動填寫的 detailing_cost / repair_cost 欄位（那兩個已經被 repair_items
+  // 請款流程取代）。2026-08-30 修正：這裡原本漏加 car.tax_amount（稅金/
+  // 發票稅金），跟 car-maintenance-tab.tsx、analytics-module.tsx 是同一批
+  // 修正——理由見那兩個檔案裡的說明。
   const approvedPrepCostByCar = new Map<string, number>();
   for (const item of repairItems) {
     if (item.status !== "approved") continue;
@@ -33,7 +35,8 @@ export function CarsKpi({
   const totalCost = (car: Car) =>
     Number(car.purchase_price) +
     (approvedPrepCostByCar.get(car.id) ?? 0) +
-    Number(car.transfer_fee ?? 0);
+    Number(car.transfer_fee ?? 0) +
+    Number(car.tax_amount ?? 0);
 
   const inventoryCars = cars.filter((c) => isInInventory(c.status));
   const inventoryCount = inventoryCars.length;
@@ -54,7 +57,7 @@ export function CarsKpi({
       <KpiCard
         label="庫存總成本"
         value={canViewCost ? formatCurrency(inventoryCost) : "🔒 權限不足"}
-        sub={canViewCost ? "收購+已核准整備費+規費" : undefined}
+        sub={canViewCost ? "收購+已核准整備費+規費+稅金" : undefined}
       />
       <KpiCard label="開價總額" value={formatCurrency(inventoryAskTotal)} />
     </div>

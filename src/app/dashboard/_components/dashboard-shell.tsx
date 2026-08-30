@@ -178,6 +178,7 @@ export function DashboardShell({
             staff={staff}
             canSetCommission={permissions.canManageStaff}
             tenantName={tenantName}
+            repairItems={repairItems}
           />
         )}
         {activeModule === "commission" && (

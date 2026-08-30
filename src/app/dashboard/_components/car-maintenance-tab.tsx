@@ -30,8 +30,15 @@ export const REPAIR_CATEGORY_ICON: Record<RepairItemCategory, string> = {
   其他: "📎",
 };
 
+// 2026-08-30 修正：這裡原本漏加 car.tax_amount（稅金/發票稅金）——
+// cars-actions.ts 的 computeClosingFields() 車輛結帳封存當下算
+// closed_total_cost 時，稅金一直都有算進去，但這裡（車輛還沒結帳、即時
+// 顯示用）的總成本公式漏了這一項，導致同一輛車在「還沒賣出」跟「剛結帳
+// 封存」兩個時間點看到的總成本/淨利數字會突然跳動——不是真的有新增
+// 成本，是這裡本來就少算了稅金。跟 cars-kpi.tsx、analytics-module.tsx
+// 的 totalCost/liveTotalCost 是同一批修正，三個地方都要一起補上。
 function totalCost(car: Car, approvedPrepCost: number) {
-  return Number(car.purchase_price) + approvedPrepCost + Number(car.transfer_fee ?? 0);
+  return Number(car.purchase_price) + approvedPrepCost + Number(car.transfer_fee ?? 0) + Number(car.tax_amount ?? 0);
 }
 
 export function CarMaintenanceTab({
@@ -84,6 +91,7 @@ export function CarMaintenanceTab({
           purchasePrice={car.purchase_price}
           prepCost={totalPrepCost}
           transferFee={car.transfer_fee}
+          taxAmount={car.tax_amount}
           totalCost={cost}
           revenueBasis={revenueBasis}
           isFinalPrice={car.final_price != null}
@@ -106,6 +114,7 @@ function VehiclePnlCard({
   purchasePrice,
   prepCost,
   transferFee,
+  taxAmount,
   totalCost,
   revenueBasis,
   isFinalPrice,
@@ -114,6 +123,11 @@ function VehiclePnlCard({
   purchasePrice: number;
   prepCost: number;
   transferFee: number | null;
+  /** 稅金/發票稅金——2026-08-30 之前這張卡片的成本拆解沒有把這個欄位
+   * 秀出來，即使 car-form-modal.tsx 新增/編輯車輛時本來就能填，容易讓人
+   * 誤以為系統沒有算到、跟結帳當下（closed_total_cost）算出來的數字對
+   * 不起來，見上面 totalCost() 的說明。 */
+  taxAmount: number | null;
   totalCost: number;
   revenueBasis: number | null;
   isFinalPrice: boolean;
@@ -131,6 +145,8 @@ function VehiclePnlCard({
         <CostChip label="維修整備費" value={prepCost} />
         <span className="text-neutral-300">+</span>
         <CostChip label="規費" value={transferFee ?? 0} />
+        <span className="text-neutral-300">+</span>
+        <CostChip label="稅金" value={taxAmount ?? 0} />
         <span className="text-neutral-300">=</span>
         <CostChip label="車輛總成本" value={totalCost} strong />
       </div>

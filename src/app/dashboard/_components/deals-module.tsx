@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { Car, Customer, Deal, DealStatus } from "@/lib/supabase/types";
+import type { Car, Customer, Deal, DealStatus, RepairItem } from "@/lib/supabase/types";
 import { formatCurrency } from "@/lib/format";
 import { DealFormModal } from "./deal-form-modal";
 import { DealContractPreview } from "./deal-contract-preview";
@@ -27,6 +27,7 @@ export function DealsModule({
   staff,
   canSetCommission,
   tenantName,
+  repairItems,
 }: {
   deals: Deal[];
   cars: Car[];
@@ -34,6 +35,9 @@ export function DealsModule({
   staff: { id: string; name: string | null }[];
   canSetCommission: boolean;
   tenantName?: string;
+  /** 給「業務薪水試算小工具」算選中車輛的已核准整備費用，見
+   * deal-form-modal.tsx 開頭的說明。 */
+  repairItems: RepairItem[];
 }) {
   const [modalState, setModalState] = useState<ModalState>(null);
   const [previewDeal, setPreviewDeal] = useState<Deal | null>(null);
@@ -138,6 +142,7 @@ export function DealsModule({
           customers={customers}
           staff={staff}
           canSetCommission={canSetCommission}
+          repairItems={repairItems}
           onClose={() => setModalState(null)}
         />
       )}

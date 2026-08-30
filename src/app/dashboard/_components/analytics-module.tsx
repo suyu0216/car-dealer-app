@@ -42,8 +42,13 @@ export function AnalyticsModule({
     );
   }
   const livePrepCost = (car: Car) => approvedPrepCostByCar.get(car.id) ?? 0;
+  // 2026-08-30 修正：這裡原本漏加 car.tax_amount（稅金/發票稅金）——跟
+  // car-maintenance-tab.tsx、cars-kpi.tsx 是同一批修正，理由見那兩個
+  // 檔案裡的說明：車輛結帳封存當下（closed_total_cost）本來就有把稅金
+  // 算進去，這裡（車輛還在庫、即時計算）漏了，導致同一輛車賣出前後的
+  // 總成本數字會不一致。
   const liveTotalCost = (car: Car) =>
-    Number(car.purchase_price) + livePrepCost(car) + Number(car.transfer_fee ?? 0);
+    Number(car.purchase_price) + livePrepCost(car) + Number(car.transfer_fee ?? 0) + Number(car.tax_amount ?? 0);
 
   const inventoryCount = inventoryCars.length;
   const inventoryAssetCost = inventoryCars.reduce((sum, c) => sum + liveTotalCost(c), 0);

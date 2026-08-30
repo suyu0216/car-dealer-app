@@ -1,10 +1,11 @@
 "use client";
 
-import { useActionState, useEffect, useState } from "react";
+import { useActionState, useEffect, useMemo, useRef, useState } from "react";
 import { createDeal, updateDeal, type DealFormState } from "../deals-actions";
 import { useUnsavedChangesGuard } from "./use-unsaved-changes-guard";
 import { CASH_POOL_METHOD_OPTIONS } from "@/lib/cash-pool";
-import type { Car, Customer, Deal, DealStatus } from "@/lib/supabase/types";
+import { formatCurrency } from "@/lib/format";
+import type { Car, Customer, Deal, DealStatus, RepairItem } from "@/lib/supabase/types";
 
 const STATUS_OPTIONS: { value: DealStatus; label: string }[] = [
   { value: "draft", label: "草約" },
@@ -22,6 +23,7 @@ export function DealFormModal({
   cars,
   customers,
   staff,
+  repairItems,
   canSetCommission,
   onClose,
 }: {
@@ -30,6 +32,10 @@ export function DealFormModal({
   cars: Car[];
   customers: Customer[];
   staff: { id: string; name: string | null }[];
+  /** 「業務薪水試算小工具」算車輛已核准的維修整備費要用——只有
+   * canSetCommission（老闆）看得到這個試算工具，一般業務就算拿到這個
+   * prop 也看不到用不到，見下面的說明。 */
+  repairItems: RepairItem[];
   /** 只有車行管理員能填寫/修改業務抽成，避免一般業務球員兼裁判自己填。 */
   canSetCommission: boolean;
   onClose: () => void;
@@ -39,6 +45,11 @@ export function DealFormModal({
   const [customerId, setCustomerId] = useState(deal?.customer_id ?? "");
   const [customerName, setCustomerName] = useState(deal?.customer_name ?? "");
   const [customerPhone, setCustomerPhone] = useState(deal?.customer_phone ?? "");
+  // 「選定車輛」「成交價」原本是 uncontrolled（defaultValue）——「業務薪水
+  // 試算小工具」需要即時知道使用者選了哪台車、打了多少成交價才能即時算，
+  // 改成 controlled，行為不變（一樣把值透過同名 name 帶進 FormData）。
+  const [carId, setCarId] = useState(deal?.car_id ?? "");
+  const [finalPrice, setFinalPrice] = useState(deal?.final_price != null ? String(deal.final_price) : "");
   const { markDirty, requestClose } = useUnsavedChangesGuard(onClose);
 
   useEffect(() => {
@@ -53,6 +64,80 @@ export function DealFormModal({
       setCustomerName(found.name);
       setCustomerPhone(found.phone ?? "");
     }
+  }
+
+  // ---------------------------------------------------------------------
+  // 「業務薪水試算小工具」——2026-08-30 新增。安安反映庫存管理那邊「總
+  // 成本」的正確算法應該是「收購價＋維修整備費＋規費＋稅金」，再用「成交
+  // 價－總成本」才是這台車真正的淨利；她想用這個淨利，再扣掉「我們平常
+  // 的稅金」（她自己填，可以填百分比、也可以直接填固定金額），算出稅後
+  // 淨利，接著用同一套「百分比／固定金額」兩種填法，決定業務這筆的薪水／
+  // 抽成建議金額。這個小工具完全是選填的即時試算，算出來的建議金額只是
+  // 「帶入」到下面本來就有的「預估抽成」欄位，不會自動覆蓋、也不會單獨
+  // 存進資料庫——deals 表只認「預估抽成」那個數字，試算過程的稅金/抽成
+  // 比例只是幫忙算這個數字用的計算機，不影響既有的資料結構跟其他地方的
+  // 邏輯。canSetCommission 之外的人本來就看不到這整個區塊。
+  const [showCalculator, setShowCalculator] = useState(false);
+  const [taxMode, setTaxMode] = useState<"percent" | "amount">("amount");
+  const [taxPercent, setTaxPercent] = useState("");
+  const [taxFixed, setTaxFixed] = useState("");
+  const [commissionMode, setCommissionMode] = useState<"percent" | "amount">("percent");
+  const [commissionPercent, setCommissionPercent] = useState("");
+  const [commissionFixed, setCommissionFixed] = useState("");
+  const commissionInputRef = useRef<HTMLInputElement>(null);
+
+  const selectedCar = useMemo(() => cars.find((c) => c.id === carId) ?? null, [cars, carId]);
+
+  // 車輛總成本＝收購價＋已核准維修整備費＋規費＋稅金，跟 cars-kpi.tsx／
+  // car-maintenance-tab.tsx／analytics-module.tsx 是同一套公式，這裡不
+  // 應該、也不會再各算各的一套。已結帳（closed_at 有值，理論上不太會
+  // 發生在「還沒交車」的合約選的車上）就直接用封存快照，避免顯示跟真正
+  // 入帳的數字對不起來。
+  const vehicleTotalCost = useMemo(() => {
+    if (!selectedCar) return null;
+    if (selectedCar.closed_at != null) return Number(selectedCar.closed_total_cost ?? 0);
+    const approvedPrepCost = repairItems
+      .filter((r) => r.car_id === selectedCar.id && r.status === "approved")
+      .reduce((sum, r) => sum + Number(r.amount), 0);
+    return (
+      Number(selectedCar.purchase_price) +
+      approvedPrepCost +
+      Number(selectedCar.transfer_fee ?? 0) +
+      Number(selectedCar.tax_amount ?? 0)
+    );
+  }, [selectedCar, repairItems]);
+
+  const revenue = finalPrice.trim() === "" ? null : Number(finalPrice);
+  const preTaxProfit =
+    vehicleTotalCost != null && revenue != null && Number.isFinite(revenue) ? revenue - vehicleTotalCost : null;
+
+  const taxDeduction =
+    preTaxProfit == null
+      ? null
+      : taxMode === "percent"
+        ? taxPercent.trim() === ""
+          ? null
+          : (preTaxProfit * Number(taxPercent)) / 100
+        : taxFixed.trim() === ""
+          ? 0
+          : Number(taxFixed);
+
+  const afterTaxProfit = preTaxProfit == null || taxDeduction == null ? null : preTaxProfit - taxDeduction;
+
+  const suggestedCommission =
+    afterTaxProfit == null
+      ? null
+      : commissionMode === "percent"
+        ? commissionPercent.trim() === ""
+          ? null
+          : (afterTaxProfit * Number(commissionPercent)) / 100
+        : commissionFixed.trim() === ""
+          ? null
+          : Number(commissionFixed);
+
+  function applySuggestedCommission() {
+    if (suggestedCommission == null || !commissionInputRef.current) return;
+    commissionInputRef.current.value = String(Math.round(suggestedCommission));
   }
 
   return (
@@ -77,7 +162,13 @@ export function DealFormModal({
 
           <div>
             <label className="block text-sm font-medium text-neutral-700">選定車輛</label>
-            <select name="car_id" defaultValue={deal?.car_id ?? ""} required className={INPUT_CLASS}>
+            <select
+              name="car_id"
+              value={carId}
+              onChange={(e) => setCarId(e.target.value)}
+              required
+              className={INPUT_CLASS}
+            >
               <option value="" disabled>
                 請選擇車輛
               </option>
@@ -131,13 +222,22 @@ export function DealFormModal({
           </div>
 
           <div className="grid grid-cols-3 gap-3">
-            <Field
-              label="成交價"
-              name="final_price"
-              type="number"
-              defaultValue={deal?.final_price != null ? String(deal.final_price) : ""}
-              required
-            />
+            <div>
+              <label htmlFor="final_price" className="block text-sm font-medium text-neutral-700">
+                成交價
+              </label>
+              <input
+                id="final_price"
+                name="final_price"
+                type="number"
+                min={0}
+                step="any"
+                value={finalPrice}
+                onChange={(e) => setFinalPrice(e.target.value)}
+                required
+                className={INPUT_CLASS}
+              />
+            </div>
             <Field
               label="訂金"
               name="deposit_amount"
@@ -195,13 +295,107 @@ export function DealFormModal({
               非管理員送出表單時這個欄位完全不會出現在 FormData 裡，
               deals-actions.ts 那邊也會忽略任何非管理員帶上來的值，雙重防呆。 */}
           {canSetCommission && (
-            <Field
-              label="預估抽成（撥給承辦業務）"
-              name="commission_amount"
-              type="number"
-              defaultValue={deal?.commission_amount != null ? String(deal.commission_amount) : ""}
-              placeholder="選填，例如 8000"
-            />
+            <div>
+              <div>
+                <label htmlFor="commission_amount" className="block text-sm font-medium text-neutral-700">
+                  預估抽成（撥給承辦業務）
+                </label>
+                <input
+                  id="commission_amount"
+                  name="commission_amount"
+                  type="number"
+                  min={0}
+                  step="any"
+                  ref={commissionInputRef}
+                  defaultValue={deal?.commission_amount != null ? String(deal.commission_amount) : ""}
+                  placeholder="選填，例如 8000"
+                  className={INPUT_CLASS}
+                />
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowCalculator((v) => !v)}
+                className="mt-2 text-xs font-medium text-[#A6793D] hover:underline"
+              >
+                {showCalculator ? "收起試算小工具 ▲" : "🧮 用淨利算業務薪水（選填小工具） ▼"}
+              </button>
+
+              {showCalculator && (
+                <div className="mt-2 space-y-3 rounded-xl border border-neutral-200 bg-[#F8F9FA] p-3.5 text-sm">
+                  {!selectedCar || revenue == null ? (
+                    <p className="text-xs text-neutral-400">請先選好車輛、填好成交價，才能試算。</p>
+                  ) : (
+                    <>
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-neutral-500">
+                          稅前淨利（成交價 − 收購價/整備費/規費/稅金的總成本）
+                        </span>
+                        <span
+                          className={
+                            "font-semibold tabular-nums " +
+                            (preTaxProfit != null && preTaxProfit < 0 ? "text-[#B75454]" : "text-neutral-800")
+                          }
+                        >
+                          {preTaxProfit != null ? formatCurrency(preTaxProfit) : "—"}
+                        </span>
+                      </div>
+
+                      <RateOrAmountRow
+                        label="我們平常的稅金"
+                        mode={taxMode}
+                        onModeChange={setTaxMode}
+                        percentValue={taxPercent}
+                        onPercentChange={setTaxPercent}
+                        amountValue={taxFixed}
+                        onAmountChange={setTaxFixed}
+                        percentPlaceholder="例如 5（＝稅前淨利的 5%）"
+                        amountPlaceholder="例如 3000"
+                      />
+
+                      <div className="flex items-center justify-between border-t border-neutral-200 pt-2.5">
+                        <span className="text-xs text-neutral-500">稅後淨利</span>
+                        <span className="font-semibold tabular-nums text-neutral-800">
+                          {afterTaxProfit != null ? formatCurrency(afterTaxProfit) : "—"}
+                        </span>
+                      </div>
+
+                      <RateOrAmountRow
+                        label="業務抽成"
+                        mode={commissionMode}
+                        onModeChange={setCommissionMode}
+                        percentValue={commissionPercent}
+                        onPercentChange={setCommissionPercent}
+                        amountValue={commissionFixed}
+                        onAmountChange={setCommissionFixed}
+                        percentPlaceholder="例如 30（＝稅後淨利的 30%）"
+                        amountPlaceholder="例如 8000"
+                      />
+
+                      <div className="flex items-center justify-between gap-3 border-t border-neutral-200 pt-2.5">
+                        <div>
+                          <p className="text-xs text-neutral-500">建議薪水金額</p>
+                          <p className="text-lg font-semibold tabular-nums text-[#A6793D]">
+                            {suggestedCommission != null ? formatCurrency(suggestedCommission) : "—"}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={applySuggestedCommission}
+                          disabled={suggestedCommission == null}
+                          className="rounded-lg bg-[#BFA074] px-3 py-1.5 text-xs font-medium text-white transition hover:bg-[#AD9066] disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          帶入上方抽成欄位
+                        </button>
+                      </div>
+                      <p className="text-[11px] text-neutral-400">
+                        這裡只是幫忙算數字，帶入之後上方欄位仍然可以手動調整，實際存檔以「預估抽成」欄位的數字為準。
+                      </p>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
           )}
 
           <div>
@@ -279,6 +473,83 @@ function Field({
         step={type === "number" ? "any" : undefined}
         className={INPUT_CLASS}
       />
+    </div>
+  );
+}
+
+/**
+ * 「業務薪水試算小工具」共用的一列——「稅金」跟「業務抽成」都要支援
+ * 同一套「填百分比／填固定金額」二選一介面，不要各寫一份，兩邊的算法/
+ * 外觀才會真的一致（見 DealFormModal 開頭的說明）。
+ */
+function RateOrAmountRow({
+  label,
+  mode,
+  onModeChange,
+  percentValue,
+  onPercentChange,
+  amountValue,
+  onAmountChange,
+  percentPlaceholder,
+  amountPlaceholder,
+}: {
+  label: string;
+  mode: "percent" | "amount";
+  onModeChange: (mode: "percent" | "amount") => void;
+  percentValue: string;
+  onPercentChange: (value: string) => void;
+  amountValue: string;
+  onAmountChange: (value: string) => void;
+  percentPlaceholder: string;
+  amountPlaceholder: string;
+}) {
+  const calcInputClass =
+    "w-full rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 text-sm text-neutral-800 outline-none placeholder:text-neutral-400 focus:border-[#BFA074]";
+
+  return (
+    <div>
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-medium text-neutral-600">{label}</span>
+        <div className="flex overflow-hidden rounded-md border border-neutral-200 text-[11px]">
+          <button
+            type="button"
+            onClick={() => onModeChange("percent")}
+            className={"px-2 py-1 font-medium transition " + (mode === "percent" ? "bg-[#BFA074] text-white" : "bg-white text-neutral-500")}
+          >
+            填 %
+          </button>
+          <button
+            type="button"
+            onClick={() => onModeChange("amount")}
+            className={"px-2 py-1 font-medium transition " + (mode === "amount" ? "bg-[#BFA074] text-white" : "bg-white text-neutral-500")}
+          >
+            填金額
+          </button>
+        </div>
+      </div>
+      <div className="mt-1.5">
+        {mode === "percent" ? (
+          <input
+            type="number"
+            min={0}
+            step="any"
+            value={percentValue}
+            onChange={(e) => onPercentChange(e.target.value)}
+            placeholder={percentPlaceholder}
+            className={calcInputClass}
+          />
+        ) : (
+          <input
+            type="number"
+            min={0}
+            step="any"
+            value={amountValue}
+            onChange={(e) => onAmountChange(e.target.value)}
+            placeholder={amountPlaceholder}
+            className={calcInputClass}
+          />
+        )}
+      </div>
     </div>
   );
 }
