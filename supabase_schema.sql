@@ -424,6 +424,19 @@ comment on table public.customers is 'CRM 賞車客戶；follow_up_status: new(�
 
 create index if not exists customers_tenant_id_idx on public.customers (tenant_id);
 
+-- 2026-08-30：客戶資料隱私保護——客戶名單是公司資產，但也是業務個人開發
+-- 的名單，原本車行內所有員工都看得到全部客戶，改成「只看得到自己名下的
+-- 客戶」，老闆（tenant_admin）例外，仍然可以看到全體員工的客戶資料。
+-- owner_profile_id 由後端（customers-actions.ts 的 createCustomer）在
+-- 新增客戶時自動填入目前登入者，前端表單不開放自己選填。這次 migration
+-- 之前既有的客戶資料沒有歸屬紀錄，保守起見先不指定給任何人——這批舊
+-- 資料只有老闆看得到，之後如果需要，可以再另外做一個「指派客戶」的功能
+-- 讓老闆把舊名單重新分配給對應業務。
+alter table public.customers
+  add column if not exists owner_profile_id uuid references public.profiles (id) on delete set null;
+
+create index if not exists customers_owner_profile_id_idx on public.customers (owner_profile_id);
+
 -- -----------------------------------------------------------------------------
 -- 7. deals（買賣合約與交易）
 -- -----------------------------------------------------------------------------
@@ -714,6 +727,11 @@ create trigger guard_profiles_sensitive_update
 -- 的 RLS 限制，改成在函式自己的程式邏輯裡明確檢查權限，檢查嚴謹程度不輸
 -- RLS，只是用程式碼明確表達，不依賴「改完是否還看得到」這個 RLS 的隱性
 -- 前提。
+-- 2026-08-30：老闆帳號保護——老闆帳號可能被意外移除到整間車行沒人管理，
+-- 這件事只有老闆本人可以做，其他人（包含另一位老闆）都不能代為操作。
+-- 判斷「target_id 現在的角色是不是老闆」，是老闆的話把上面舊版「不能對
+-- 自己動手」的規則整個反過來（只有本人可以動自己）；不是老闆的員工，
+-- 維持原本「不能對自己動手」的規則不變。
 create or replace function public.remove_staff_from_tenant(target_id uuid)
 returns void
 language plpgsql
@@ -722,16 +740,32 @@ set search_path = public
 as $$
 declare
   v_caller_tenant uuid;
+  v_target_role text;
 begin
   if public.current_role_name() <> 'tenant_admin' then
     raise exception '沒有權限執行這項操作，請聯繫車行管理員。' using errcode = '42501';
   end if;
 
-  if target_id = auth.uid() then
-    raise exception '無法在這裡移除自己，請請另一位管理員協助。' using errcode = '42501';
+  v_caller_tenant := public.current_tenant_id();
+
+  select role into v_target_role
+    from public.profiles
+    where id = target_id
+      and tenant_id = v_caller_tenant;
+
+  if v_target_role is null then
+    raise exception '找不到這個員工，或該員工不屬於你的車行。' using errcode = '42501';
   end if;
 
-  v_caller_tenant := public.current_tenant_id();
+  if v_target_role = 'tenant_admin' then
+    if target_id <> auth.uid() then
+      raise exception '老闆帳號只能由本人移除，其他人（包含其他老闆）都不能代為操作。' using errcode = '42501';
+    end if;
+  else
+    if target_id = auth.uid() then
+      raise exception '無法在這裡移除自己，請請另一位管理員協助。' using errcode = '42501';
+    end if;
+  end if;
 
   -- removed_from_tenant_id：記下是被哪間車行移出的，讓同一間車行之後
   -- 可以用 restore_staff_to_tenant()（見下方）把人接回來，見該函式上方
@@ -944,11 +978,21 @@ create policy "customers_super_admin_all"
   using (public.is_super_admin())
   with check (public.is_super_admin());
 
+-- 2026-08-30：客戶資料隱私保護——一般員工只看得到自己名下的客戶
+-- （owner_profile_id = auth.uid()），老闆（tenant_admin）例外，可以看到
+-- 全體員工的客戶資料，取代舊版只看 tenant_id 的 customers_tenant_scoped。
 drop policy if exists "customers_tenant_scoped" on public.customers;
-create policy "customers_tenant_scoped"
+drop policy if exists "customers_owner_or_tenant_admin" on public.customers;
+create policy "customers_owner_or_tenant_admin"
   on public.customers for all
-  using (tenant_id = public.current_tenant_id())
-  with check (tenant_id = public.current_tenant_id());
+  using (
+    tenant_id = public.current_tenant_id()
+    and (owner_profile_id = auth.uid() or public.current_role_name() = 'tenant_admin')
+  )
+  with check (
+    tenant_id = public.current_tenant_id()
+    and (owner_profile_id = auth.uid() or public.current_role_name() = 'tenant_admin')
+  );
 
 -- -----------------------------------------------------------------------------
 -- deals policies
