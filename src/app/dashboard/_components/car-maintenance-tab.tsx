@@ -30,22 +30,12 @@ export const REPAIR_CATEGORY_ICON: Record<RepairItemCategory, string> = {
   其他: "📎",
 };
 
-// 2026-08-30 修正：這裡原本漏加 car.tax_amount（稅金/發票稅金）——
-// cars-actions.ts 的 computeClosingFields() 車輛結帳封存當下算
-// closed_total_cost 時，稅金一直都有算進去，但這裡（車輛還沒結帳、即時
-// 顯示用）的總成本公式漏了這一項，導致同一輛車在「還沒賣出」跟「剛結帳
-// 封存」兩個時間點看到的總成本/淨利數字會突然跳動——不是真的有新增
-// 成本，是這裡本來就少算了稅金。跟 cars-kpi.tsx、analytics-module.tsx
-// 的 totalCost/liveTotalCost 是同一批修正，三個地方都要一起補上。
-function totalCost(car: Car, approvedPrepCost: number) {
-  return Number(car.purchase_price) + approvedPrepCost + Number(car.transfer_fee ?? 0) + Number(car.tax_amount ?? 0);
-}
-
 export function CarMaintenanceTab({
   car,
   repairItems,
   canReview,
   canViewCost,
+  canViewCommission,
   receiptUrls,
   staff,
 }: {
@@ -59,6 +49,14 @@ export function CarMaintenanceTab({
    * 底下的維修請款紀錄本身（金額、審核狀態）仍然照舊顯示——那是業務日常
    * 要送出/追蹤的請款流程，不是「進貨成本／總利潤」。 */
   canViewCost: boolean;
+  /** 2026-08-30 修正：這張財務損益卡原本只看 canViewCost，已結帳車輛的
+   * 「車輛總成本」直接讀 closed_total_cost 快照——這個快照本身已經封存
+   * 業務抽成，等於任何看得到成本的人（例如預設的店長）都會連帶看到抽成
+   * 金額，繞過了車輛詳情頁「車輛資訊」分頁那邊已經做好的抽成隱私保護
+   * （只有 canViewCommission 才看得到抽成，見 car-detail-modal.tsx／
+   * car-card.tsx 的說明）。這裡補上同一個權限開關，維修請款分頁的財務
+   * 損益卡也要跟著擋。 */
+  canViewCommission: boolean;
   /** evidence_path -> 伺服器簽發的短效期 signed URL（見 dashboard/page.tsx）。 */
   receiptUrls: Record<string, string>;
   /** 「墊款業務/經手人」下拉選單用——同車行的員工清單，新邀請的員工會
@@ -74,9 +72,14 @@ export function CarMaintenanceTab({
   const approvedItems = repairItems.filter((r) => r.status === "approved");
   const liveTotalPrepCost = approvedItems.reduce((sum, r) => sum + Number(r.amount), 0);
   const totalPrepCost = isClosed ? Number(car.closed_prep_cost ?? 0) : liveTotalPrepCost;
-  const cost = isClosed ? Number(car.closed_total_cost ?? 0) : totalCost(car, liveTotalPrepCost);
+  // 2026-08-30 修正：業務抽成只有已結帳車輛才有快照，未結帳一律當作 0
+  // （合約還沒交車結案，不會有抽成數字）；「車輛總成本」跟「淨利/毛利」
+  // 都改成從各項成本組件直接加總（見下面 VehiclePnlCard），不再直接讀
+  // closed_total_cost 快照——這樣才能依權限決定要不要把抽成算進去，也
+  // 保證卡片上顯示的每一項成本加起來一定等於顯示的總成本，不會因為
+  // 「看得到的項目」跟「看不到的抽成」兜不起來。
+  const commissionCost = isClosed ? Number(car.closed_commission_cost ?? 0) : 0;
   const revenueBasis = car.final_price ?? car.selling_price ?? null;
-  const profit = revenueBasis != null ? revenueBasis - cost : null;
 
   return (
     <div className="space-y-6">
@@ -92,10 +95,10 @@ export function CarMaintenanceTab({
           prepCost={totalPrepCost}
           transferFee={car.transfer_fee}
           taxAmount={car.tax_amount}
-          totalCost={cost}
+          commissionCost={commissionCost}
+          canViewCommission={canViewCommission}
           revenueBasis={revenueBasis}
           isFinalPrice={car.final_price != null}
-          profit={profit}
         />
       ) : (
         <section className="rounded-2xl border border-neutral-200 bg-[#F8F9FA] p-4 text-center text-sm text-neutral-400">
@@ -115,10 +118,10 @@ function VehiclePnlCard({
   prepCost,
   transferFee,
   taxAmount,
-  totalCost,
+  commissionCost,
+  canViewCommission,
   revenueBasis,
   isFinalPrice,
-  profit,
 }: {
   purchasePrice: number;
   prepCost: number;
@@ -128,11 +131,24 @@ function VehiclePnlCard({
    * 誤以為系統沒有算到、跟結帳當下（closed_total_cost）算出來的數字對
    * 不起來，見上面 totalCost() 的說明。 */
   taxAmount: number | null;
-  totalCost: number;
+  /** 已結帳車輛的業務抽成快照，未結帳一律 0——是不是薪資隱私、要不要
+   * 顯示看 canViewCommission。 */
+  commissionCost: number;
+  /** 業務抽成是薪資隱私，只有「看得到全體薪資」或「會計/財務管理」才是
+   * true，見 cars-manager.tsx 怎麼算這個值、car-card.tsx 的同一套說明。 */
+  canViewCommission: boolean;
   revenueBasis: number | null;
   isFinalPrice: boolean;
-  profit: number | null;
 }) {
+  const showCommission = canViewCommission && commissionCost > 0;
+  // 車輛總成本／淨利一律用「看得到的項目」直接加總，不是讀 closed_total_cost
+  // 快照——沒有 canViewCommission 的人，這裡算出來的總成本／淨利就完全
+  // 不含抽成，卡片上顯示的每一項成本（收購價/維修整備費/規費/稅金〔/
+  // 抽成〕）加起來一定剛好等於顯示的總成本，不會有「看得到的項目兜不出
+  // 顯示總數」的落差、也不會被拿來反推抽成金額。
+  const totalCost =
+    purchasePrice + prepCost + Number(transferFee ?? 0) + Number(taxAmount ?? 0) + (showCommission ? commissionCost : 0);
+  const profit = revenueBasis != null ? revenueBasis - totalCost : null;
   return (
     <section className="rounded-2xl border border-neutral-200 bg-[#F8F9FA] p-4">
       <h3 className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
@@ -147,6 +163,12 @@ function VehiclePnlCard({
         <CostChip label="規費" value={transferFee ?? 0} />
         <span className="text-neutral-300">+</span>
         <CostChip label="稅金" value={taxAmount ?? 0} />
+        {showCommission && (
+          <>
+            <span className="text-neutral-300">+</span>
+            <CostChip label="業務抽成" value={commissionCost} />
+          </>
+        )}
         <span className="text-neutral-300">=</span>
         <CostChip label="車輛總成本" value={totalCost} strong />
       </div>
@@ -163,6 +185,7 @@ function VehiclePnlCard({
         <div>
           <p className="text-[11px] text-neutral-400">
             {isFinalPrice ? "實際淨利" : "預估毛利"}
+            {!showCommission && commissionCost > 0 ? "（不含業務抽成）" : ""}
           </p>
           <p
             className={

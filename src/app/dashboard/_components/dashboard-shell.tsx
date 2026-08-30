@@ -201,7 +201,13 @@ export function DashboardShell({
           />
         )}
         {activeModule === "analytics" && permissions.canViewAnalytics && (
-          <AnalyticsModule cars={cars} repairItems={repairItems} deals={deals} staff={staff} />
+          <AnalyticsModule
+            cars={cars}
+            repairItems={repairItems}
+            deals={deals}
+            staff={staff}
+            canViewCommission={permissions.canViewAllSalary || permissions.canManageFinance}
+          />
         )}
         {activeModule === "branding" && permissions.canManageStaff && tenant && (
           <BrandSettingsModule tenant={tenant} tenantVideos={tenantVideos} />

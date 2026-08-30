@@ -12,7 +12,7 @@ import {
   type CashPoolFormState,
 } from "../cash-pool-actions";
 import { CASH_POOL_METHOD_OPTIONS, MANUAL_TRANSACTION_CATEGORIES, computeCashPoolSummary } from "@/lib/cash-pool";
-import { formatCurrency, formatDate } from "@/lib/format";
+import { formatCurrency, formatDate, currentTaiwanDateKey } from "@/lib/format";
 import type { Car, CompanyExpense, Deal, Tenant, Transaction, TransactionType } from "@/lib/supabase/types";
 
 type TenantPoolFields = Pick<Tenant, "cash_opening_balance" | "bank_opening_balance" | "cash_pool_started_at">;
@@ -221,7 +221,7 @@ function CashPoolSetupCard({
     );
   }
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = currentTaiwanDateKey();
 
   return (
     <section className="rounded-2xl border border-neutral-200 bg-white p-6 shadow-sm">
@@ -304,7 +304,7 @@ function CashPoolSetupCard({
 function ManualEntryPanel({ onSaved }: { onSaved: () => void }) {
   const [open, setOpen] = useState(false);
   const [state, formAction, pending] = useActionState(createManualCashTransaction, emptyState);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = currentTaiwanDateKey();
 
   useEffect(() => {
     if (state?.success) {

@@ -22,6 +22,7 @@
 //              分潤金額顯示「請先設定股權比例」）
 import { useActionState, useMemo, useState } from "react";
 import { updateProfitShareSettings, type ProfitShareSettingsState } from "../tenant-actions";
+import { currentTaiwanMonthKey, taiwanMonthKey } from "@/lib/format";
 
 export type ProfitShareCar = {
   id: string;
@@ -50,13 +51,12 @@ export type ProfitShareExpense = {
 
 const initialSettingsState: ProfitShareSettingsState = {};
 
-function monthKeyOf(dateStr: string): string {
-  return dateStr.slice(0, 7);
-}
-
-function currentMonthKey(): string {
-  return new Date().toISOString().slice(0, 7);
-}
+// 2026-08-30：改用 src/lib/format.ts 統一的台灣時間月份 key，跟
+// payroll-module.tsx／analytics-module.tsx 保持同一套「這筆錢算哪個月」
+// 規則，避免用 UTC 切字串在台灣時間 00:00~08:00 這段區間算錯月份。
+// 保留原本的函式名稱，檔案裡其他呼叫點不用跟著改。
+const monthKeyOf = taiwanMonthKey;
+const currentMonthKey = currentTaiwanMonthKey;
 
 export function ProfitShareModule({
   tenant,

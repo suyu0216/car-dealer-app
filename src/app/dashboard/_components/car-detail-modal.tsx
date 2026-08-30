@@ -242,6 +242,7 @@ export function CarDetailModal({
               repairItems={repairItems}
               canReview={canReview}
               canViewCost={canViewCost}
+              canViewCommission={canViewCommission}
               receiptUrls={receiptUrls}
               staff={staff}
             />

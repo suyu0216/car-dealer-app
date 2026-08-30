@@ -16,7 +16,7 @@
 //     情況退回用 deals.created_at 當月份，避免這筆抽成憑空消失、算不到
 //     任何月份。
 import { useState } from "react";
-import { formatCurrency, formatDate, formatNumber } from "@/lib/format";
+import { formatCurrency, formatDate, formatNumber, currentTaiwanMonthKey, taiwanMonthKey } from "@/lib/format";
 
 type StaffOption = { id: string; name: string | null };
 
@@ -59,7 +59,7 @@ export function PayrollModule({
   canViewSalary: boolean;
   currentUserId: string | null;
 }) {
-  const defaultMonth = new Date().toISOString().slice(0, 7);
+  const defaultMonth = currentTaiwanMonthKey();
   const [month, setMonth] = useState(defaultMonth);
   // 管理員可以挑任何員工；一般業務只能看自己的，一律鎖定 currentUserId，
   // 不給下拉選單挑別人——跟業務薪資模組（commission-module.tsx）同一套
@@ -80,7 +80,7 @@ export function PayrollModule({
 
   const salaryItems = selectedId
     ? expenses.filter(
-        (e) => e.category === "人事薪資" && e.employee_profile_id === selectedId && e.expense_date.slice(0, 7) === month
+        (e) => e.category === "人事薪資" && e.employee_profile_id === selectedId && taiwanMonthKey(e.expense_date) === month
       )
     : [];
   // 這筆抽成算哪個月：優先用車輛的結帳封存日（closed_at）——安安要的是
@@ -88,7 +88,7 @@ export function PayrollModule({
   // 不太會發生在 delivered 合約上）才退回用合約建立日期，避免漏掉。
   const dealMonthKey = (d: PayrollDeal) => {
     const closedAt = carById.get(d.car_id)?.closed_at;
-    return (closedAt ?? d.created_at).slice(0, 7);
+    return taiwanMonthKey(closedAt ?? d.created_at);
   };
   const commissionDeals = selectedId
     ? deals.filter((d) => d.salesperson_id === selectedId && d.status === "delivered" && dealMonthKey(d) === month)
@@ -116,7 +116,7 @@ export function PayrollModule({
     if (!selectedId) return 0;
     const salary = expenses
       .filter(
-        (e) => e.category === "人事薪資" && e.employee_profile_id === selectedId && e.expense_date.slice(0, 7) === monthKey
+        (e) => e.category === "人事薪資" && e.employee_profile_id === selectedId && taiwanMonthKey(e.expense_date) === monthKey
       )
       .reduce((sum, e) => sum + Number(e.amount), 0);
     const commission = deals

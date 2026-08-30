@@ -20,11 +20,20 @@ export function AnalyticsModule({
   repairItems,
   deals,
   staff,
+  canViewCommission,
 }: {
   cars: Car[];
   repairItems: RepairItem[];
   deals: Deal[];
   staff: { id: string; name: string | null }[];
+  /** 業務抽成隱私保護：「已實現總毛利/淨利」原本直接讀 closed_total_cost
+   * 快照，這個快照本身已經把業務抽成算進成本裡，等於把抽成金額間接
+   * 洩漏給任何看得到這張看板的人（毛利數字反推回去就能算出抽成）。
+   * 只有 canViewAllSalary（看得到全體薪資）或 canManageFinance（管理
+   * 財務）的人才看得到含抽成的真實淨利，其他人看到的數字會把抽成
+   * 加回毛利、並在標籤上註明「不含業務抽成」，見 car-card.tsx／
+   * car-maintenance-tab.tsx 同一套隱私保護邏輯。 */
+  canViewCommission: boolean;
 }) {
   const now = new Date();
 
@@ -72,7 +81,11 @@ export function AnalyticsModule({
 
   const realizedProfitThisMonth = closedThisMonthCars.reduce((sum, c) => {
     const revenue = c.final_price ?? c.selling_price ?? 0;
-    const cost = Number(c.closed_total_cost ?? 0);
+    // closed_total_cost 快照本身已經把業務抽成算進成本——沒有
+    // canViewCommission 權限的人，這裡要把抽成從成本裡扣掉（也就是把
+    // 毛利加回來），不然毛利數字本身就會間接洩漏抽成金額。
+    const commissionCost = Number(c.closed_commission_cost ?? 0);
+    const cost = Number(c.closed_total_cost ?? 0) - (canViewCommission ? 0 : commissionCost);
     return sum + (Number(revenue) - cost);
   }, 0);
 
@@ -160,7 +173,7 @@ export function AnalyticsModule({
         <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
           <Stat label="本月成交台數" value={`${soldThisMonthCount} 輛`} />
           <Stat
-            label="已實現總毛利/淨利"
+            label={canViewCommission ? "已實現總毛利/淨利" : "已實現總毛利/淨利（不含業務抽成）"}
             value={formatCurrency(realizedProfitThisMonth)}
             tone={realizedProfitThisMonth >= 0 ? "positive" : "negative"}
           />

@@ -3,7 +3,7 @@
 import { useActionState, useEffect, useRef, useState, useTransition } from "react";
 import { useSearchParams } from "next/navigation";
 import type { CompanyExpense } from "@/lib/supabase/types";
-import { formatCurrency } from "@/lib/format";
+import { formatCurrency, currentTaiwanDateKey } from "@/lib/format";
 import {
   createCompanyExpense,
   deleteCompanyExpense,
@@ -16,7 +16,7 @@ const INPUT_CLASS =
   "mt-1 w-full rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm text-neutral-800 outline-none placeholder:text-neutral-400 focus:border-[#BFA074] focus:bg-white";
 
 function todayIso() {
-  return new Date().toISOString().slice(0, 10);
+  return currentTaiwanDateKey();
 }
 
 export function CompanyExpensesModule({ expenses }: { expenses: CompanyExpense[] }) {
