@@ -30,11 +30,14 @@ function optionalMoney(formData: FormData, name: string, label: string): number 
   return num;
 }
 
-// canSetCommission 為 false 時，回傳物件裡完全不帶 commission_amount 這個
+// canManageFinance 為 false 時，回傳物件裡完全不帶 commission_amount 這個
 // key（不是帶 null）——這樣 supabase-js 送出的 JSON payload 會直接省略
-// 這個欄位，UPDATE 時不會覆蓋掉管理員原本填好的抽成金額，INSERT 時則會
-// 用資料庫預設值（null）。一般業務不開放自己填抽成，避免球員兼裁判。
-function parseDealForm(formData: FormData, canSetCommission: boolean) {
+// 這個欄位，UPDATE 時不會覆蓋掉會計/老闆原本填好的抽成金額，INSERT 時
+// 則會用資料庫預設值（null）。2026-08-30：合約是業務填寫送出、交給會計
+// 審核填稅金/抽成才結案——這裡從原本的 canManageStaff（只有老闆）改成
+// canManageFinance（老闆恆為 true，會計預設也是 true），業務不開放自己
+// 填自己的抽成，避免球員兼裁判。
+function parseDealForm(formData: FormData, canManageFinance: boolean) {
   const carId = String(formData.get("car_id") ?? "");
   const customerName = String(formData.get("customer_name") ?? "").trim();
   const finalPriceRaw = String(formData.get("final_price") ?? "").trim();
@@ -70,7 +73,7 @@ function parseDealForm(formData: FormData, canSetCommission: boolean) {
     payment_method: (paymentMethodRaw as CashPoolMethod | null) ?? null,
     loan_status: optionalText(formData, "loan_status"),
     salesperson_id: optionalText(formData, "salesperson_id"),
-    ...(canSetCommission
+    ...(canManageFinance
       ? { commission_amount: optionalMoney(formData, "commission_amount", "預估抽成") }
       : {}),
     status: status as DealStatus,
@@ -83,12 +86,21 @@ export async function createDeal(
   formData: FormData
 ): Promise<DealFormState> {
   const { profile } = await requireTenantUser();
+  const permissions = getEffectivePermissions(profile);
 
   let values;
   try {
-    values = parseDealForm(formData, getEffectivePermissions(profile).canManageStaff);
+    values = parseDealForm(formData, permissions.canManageFinance);
   } catch (e) {
     return { error: e instanceof Error ? e.message : "表單資料不正確。" };
+  }
+
+  // 2026-08-30：「已交車」是會計/老闆審核完稅金/抽成之後才結案的最後一
+  // 步，業務不能自己直接把新合約建成已交車——前端的合約狀態下拉選單
+  // 已經把這個選項藏起來（見 deal-form-modal.tsx 的 availableStatusOptions），
+  // 這裡是伺服器端不可被繞過的第二道防線。
+  if (values.status === "delivered" && !permissions.canManageFinance) {
+    return { error: "只有會計或老闆能把合約標記為「已交車」，請先送交會計確認稅金與業務抽成。" };
   }
 
   const supabase = await createClient();
@@ -113,6 +125,7 @@ export async function updateDeal(
   formData: FormData
 ): Promise<DealFormState> {
   const { profile } = await requireTenantUser();
+  const permissions = getEffectivePermissions(profile);
 
   const id = String(formData.get("id") ?? "");
   if (!id) {
@@ -121,12 +134,26 @@ export async function updateDeal(
 
   let values;
   try {
-    values = parseDealForm(formData, getEffectivePermissions(profile).canManageStaff);
+    values = parseDealForm(formData, permissions.canManageFinance);
   } catch (e) {
     return { error: e instanceof Error ? e.message : "表單資料不正確。" };
   }
 
   const supabase = await createClient();
+
+  // 2026-08-30：「已交車」是會計/老闆審核完稅金/抽成之後才結案的最後一
+  // 步。業務沒有 canManageFinance 權限的話，前端下拉選單已經看不到這個
+  // 選項（見 deal-form-modal.tsx 的 availableStatusOptions），這裡再檢查
+  // 一次資料庫裡這張合約「原本」是不是已經是已交車——如果原本就是，允許
+  // 業務照舊存檔其他欄位（例如訂正客戶電話），不會因為這次改動被擋下來；
+  // 只有「這次才要把狀態改成已交車」而且沒有這個權限，才會被擋。
+  if (values.status === "delivered" && !permissions.canManageFinance) {
+    const { data: existingDeal } = await supabase.from("deals").select("status").eq("id", id).maybeSingle();
+    if (existingDeal?.status !== "delivered") {
+      return { error: "只有會計或老闆能把合約標記為「已交車」，請先送交會計確認稅金與業務抽成。" };
+    }
+  }
+
   const { error } = await supabase.from("deals").update(values).eq("id", id);
 
   if (error) {
