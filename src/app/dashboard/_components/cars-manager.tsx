@@ -74,6 +74,35 @@ export function CarsManager({
   const [showTrash, setShowTrash] = useState(false);
   const [modalState, setModalState] = useState<ModalState>(null);
 
+  // 2026-08-30 新增：大圖卡片（藝廊卡片）上「成本＋開銷」那一行的顯示
+  // 開關——安安想要一眼看到每台車目前的成本+開銷，但也要能自己選擇要
+  // 不要顯示，預設是開啟的。這只是單純的「這個瀏覽器要不要顯示」偏好，
+  // 不是权限，所以存在 localStorage 就好，不用寫進資料庫、也不用經過
+  // Server Action；跟 canViewCost 是分開的兩件事——沒有 canViewCost 的
+  // 人，不管這個開關開或關，卡片上一律看不到金額（見 car-card.tsx）。
+  const [showCostOnCards, setShowCostOnCards] = useState(true);
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem("cda_showCostOnCards");
+      if (stored !== null) setShowCostOnCards(stored === "true");
+    } catch {
+      // localStorage 被瀏覽器封鎖（例如無痕模式的某些設定）就維持預設值
+      // true，不影響其他功能。
+    }
+  }, []);
+  function toggleShowCostOnCards() {
+    setShowCostOnCards((prev) => {
+      const next = !prev;
+      try {
+        window.localStorage.setItem("cda_showCostOnCards", String(next));
+      } catch {
+        // 存不了就算了，這次切換在畫面上還是會生效，只是重新整理後會
+        // 退回預設值。
+      }
+      return next;
+    });
+  }
+
   // 軟刪除的車輛（deleted_at 非 null）預設從庫存列表隱藏——不進 KPI、
   // 不進篩選/表格/藝廊卡片，只在「已刪除」面板（showTrash）看得到、可以
   // 復原。見 cars-actions.ts 的 deleteCar()/restoreCar() 說明。
@@ -162,6 +191,20 @@ export function CarsManager({
               ☰ 清單表格
             </button>
           </div>
+          {permissions.canViewCost && view === "gallery" && (
+            <button
+              type="button"
+              onClick={toggleShowCostOnCards}
+              className={
+                "rounded-lg border px-3 py-1.5 text-sm font-medium transition " +
+                (showCostOnCards
+                  ? "border-[#BFA074] bg-white text-[#A6793D]"
+                  : "border-neutral-200 bg-white text-neutral-500 hover:border-[#BFA074] hover:text-[#A6793D]")
+              }
+            >
+              {showCostOnCards ? "✓ 顯示成本＋開銷" : "顯示成本＋開銷"}
+            </button>
+          )}
           {permissions.canEditCars && deletedCars.length > 0 && (
             <button
               type="button"
@@ -225,6 +268,7 @@ export function CarsManager({
                 canViewCost={permissions.canViewCost}
                 canEditCars={permissions.canEditCars}
                 repairCostByCar={repairCostByCar}
+                showCost={showCostOnCards}
                 onView={(car) => setModalState({ mode: "view", car })}
                 onEdit={(car) => setModalState({ mode: "edit", car })}
               />

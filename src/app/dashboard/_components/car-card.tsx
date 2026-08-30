@@ -12,6 +12,7 @@ export function CarCard({
   canViewCost,
   canEditCars,
   repairCost,
+  showCost,
   onView,
   onEdit,
 }: {
@@ -21,9 +22,23 @@ export function CarCard({
   /** 這輛車已核准撥款的整備維修費用加總，見 cars-manager.tsx 的
    * computeApprovedPrepCostByCar()。 */
   repairCost: number;
+  /** 2026-08-30 新增：卡片上「成本＋開銷」那一行要不要顯示——安安希望
+   * 大圖卡片能一眼看到這台車目前的成本+開銷，但也想要能自己開關，不想
+   * 看的時候可以收起來。這是單純的顯示偏好（存在瀏覽器 localStorage，
+   * 見 cars-manager.tsx），不是權限——沒有 canViewCost 的人不管這個開關
+   * 打開或關閉，一律看不到金額，兩者是分開的兩件事。 */
+  showCost: boolean;
   onView: (car: Car) => void;
   onEdit: (car: Car) => void;
 }) {
+  // 「成本＋開銷」＝收購價＋已核准整備費＋規費＋稅金，跟 cars-kpi.tsx／
+  // car-maintenance-tab.tsx／analytics-module.tsx 是同一套公式；車輛已
+  // 結帳封存（closed_at 有值）就直接讀封存快照，避免跟真正入帳的數字
+  // 對不起來，理由見 car-maintenance-tab.tsx 的說明。
+  const totalCost =
+    car.closed_at != null
+      ? Number(car.closed_total_cost ?? 0)
+      : Number(car.purchase_price) + repairCost + Number(car.transfer_fee ?? 0) + Number(car.tax_amount ?? 0);
   return (
     // 2026-08-30：「藝廊卡片」改成大圖卡片——圖片區域從 16/10 拉高到
     // 4/3，讓照片占卡片的比例明顯變大；標題、價格字級也一併放大，
@@ -75,6 +90,11 @@ export function CarCard({
 
         <div className="mt-3.5 flex items-end justify-between">
           <div>
+            {canViewCost && showCost && (
+              <p className="mb-1 text-xs font-semibold text-neutral-600">
+                成本＋開銷 {formatCurrency(totalCost)}
+              </p>
+            )}
             <p className="text-xs text-neutral-400">開價</p>
             <p className="text-lg font-semibold text-[#A6793D] tabular-nums sm:text-xl">
               {car.selling_price != null ? formatCurrency(car.selling_price) : "洽詢"}
