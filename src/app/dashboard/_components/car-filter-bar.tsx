@@ -88,7 +88,7 @@ export function CarFilterBar({
             onChange={(e) => set("status", e.target.value as CarFilters["status"])}
             className={FIELD_CLASS + " w-auto"}
           >
-            <option value="all">全部狀態</option>
+            <option value="all">全部狀態（不含已售出）</option>
             {STATUS_OPTIONS.map((s) => (
               <option key={s} value={s}>
                 {STATUS_LABEL[s]}

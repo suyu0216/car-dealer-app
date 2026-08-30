@@ -116,6 +116,10 @@ export function CarsManager({
   // 復原。見 cars-actions.ts 的 deleteCar()/restoreCar() 說明。
   const activeCars = useMemo(() => cars.filter((c) => !c.deleted_at), [cars]);
   const deletedCars = useMemo(() => cars.filter((c) => c.deleted_at), [cars]);
+  // 2026-08-30 新增：已售出車輛預設不顯示在車輛進銷存清單（見下面
+  // filteredCars 的說明），這裡另外算一個數量，讓工具列可以放一顆快捷
+  // 按鈕直接切換去看已售出的車，不用自己找「狀態」篩選在哪裡。
+  const soldCars = useMemo(() => activeCars.filter((c) => c.status === "sold"), [activeCars]);
   // 車輛新增/編輯 Modal 關閉後的非阻斷性警告（目前唯一情境：照片上傳失敗，
   // 但車輛本身已經存檔成功）。用 Toast 顯示幾秒鐘後自動消失，不擋任何操作。
   const [toast, setToast] = useState<string | null>(null);
@@ -150,10 +154,22 @@ export function CarsManager({
 
   const repairCostByCar = useMemo(() => computeApprovedPrepCostByCar(repairItems), [repairItems]);
 
+  // 2026-08-30：安安反映「已售出的車還留在車輛進銷存畫面」很奇怪——賣掉
+  // 就已經不算庫存了。這裡改成：狀態篩選在「全部狀態」時，預設不顯示
+  // 已售出的車（跟 cars-kpi.tsx 的 isInInventory() 邏輯、「庫存總成本」
+  // 只算未售出車輛是同一套定義），除非使用者自己在上面「狀態」篩選
+  // 特別選「已售出」要找舊紀錄，才會看到已售出的車。這只影響「車輛
+  // 進銷存」清單（藝廊卡片／表格）要不要顯示，已售出車輛本身的資料、
+  // 合約、抽成快照都完全不受影響，還是能透過「買賣合約與交易」或直接
+  // 選狀態篩選「已售出」找回來，不是刪除或藏起來。
   const filteredCars = activeCars.filter((car) => {
     if (!matchesKeyword(car, filters.keyword)) return false;
     if (filters.brand !== "all" && car.brand !== filters.brand) return false;
-    if (filters.status !== "all" && car.status !== filters.status) return false;
+    if (filters.status === "all") {
+      if (car.status === "sold") return false;
+    } else if (car.status !== filters.status) {
+      return false;
+    }
     if (filters.yearMin && (car.year ?? 0) < Number(filters.yearMin)) return false;
     if (filters.yearMax && (car.year ?? Infinity) > Number(filters.yearMax)) return false;
     if (filters.mileageMax && (car.mileage ?? 0) > Number(filters.mileageMax)) return false;
@@ -211,6 +227,25 @@ export function CarsManager({
               }
             >
               {showCostOnCards ? "✓ 顯示成本＋開銷" : "顯示成本＋開銷"}
+            </button>
+          )}
+          {soldCars.length > 0 && (
+            <button
+              type="button"
+              onClick={() =>
+                setFilters((prev) => ({
+                  ...prev,
+                  status: prev.status === "sold" ? "all" : "sold",
+                }))
+              }
+              className={
+                "rounded-lg border px-3 py-1.5 text-sm font-medium transition " +
+                (filters.status === "sold"
+                  ? "border-[#BFA074] bg-white text-[#A6793D]"
+                  : "border-neutral-200 bg-white text-neutral-500 hover:border-[#BFA074] hover:text-[#A6793D]")
+              }
+            >
+              🚗 已售出（{soldCars.length}）
             </button>
           )}
           {permissions.canEditCars && deletedCars.length > 0 && (
