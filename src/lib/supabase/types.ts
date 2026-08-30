@@ -291,6 +291,11 @@ export interface Customer {
   line_id: string | null;
   note: string | null;
   created_at: string;
+  /** 這筆客戶名單歸屬的員工——客戶資料隱私保護用，見
+   * customers-actions.ts／supabase_schema.sql 的 customers RLS policy。
+   * 只有老闆（tenant_admin）看得到別人名下的客戶，一般員工只看得到自己
+   * 建立的客戶（owner_profile_id = 自己）。 */
+  owner_profile_id: string | null;
 }
 
 export type DealStatus = "draft" | "signed" | "delivered";
