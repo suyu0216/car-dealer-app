@@ -62,3 +62,37 @@ export function taiwanDateParts(iso: string | Date): { year: number; month: numb
   const get = (type: string) => Number(parts.find((p) => p.type === type)?.value ?? 0);
   return { year: get("year"), month: get("month"), day: get("day") };
 }
+
+// ---------------------------------------------------------------------
+// 2026-08-30：payroll-module.tsx／profit-share-module.tsx／
+// cash-pool-module.tsx／company-expenses-module.tsx 原本各自用
+// dateStr.slice(0,7)、new Date().toISOString().slice(0,7 或 10) 算「這筆
+// 錢算哪個月/哪一天」，等於直接假設系統時間就是台灣時間——但
+// toISOString() 一律回傳 UTC，在台灣時間 00:00~08:00（UTC 前一天
+// 16:00~23:59）這段區間會被誤判成前一天/上個月，跟同一個系統裡
+// analytics-module.tsx 用 taiwanDateParts() 算出來的答案不一致。
+// 以下四個函式統一給全站「月份 key」「日期 key」使用，一律以
+// taiwanDateParts() 為準，不直接讀系統時區。
+// ---------------------------------------------------------------------
+
+/** 運算用：把時間戳記換算成「台灣時間」的月份 key，例如 "2026-08"。 */
+export function taiwanMonthKey(iso: string | Date): string {
+  const { year, month } = taiwanDateParts(iso);
+  return `${year}-${String(month).padStart(2, "0")}`;
+}
+
+/** 運算用：現在（台灣時間）的月份 key，例如 "2026-08"。 */
+export function currentTaiwanMonthKey(): string {
+  return taiwanMonthKey(new Date());
+}
+
+/** 運算用：把時間戳記換算成「台灣時間」的日期 key，例如 "2026-08-30"。 */
+export function taiwanDateKey(iso: string | Date): string {
+  const { year, month, day } = taiwanDateParts(iso);
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+/** 運算用：今天（台灣時間）的日期 key，例如 "2026-08-30"。 */
+export function currentTaiwanDateKey(): string {
+  return taiwanDateKey(new Date());
+}
