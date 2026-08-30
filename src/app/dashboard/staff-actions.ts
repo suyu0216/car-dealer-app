@@ -66,6 +66,45 @@ async function assertCanManage(targetProfileId: string) {
 }
 
 /**
+ * 2026-08-30 新增：專門給 updateStaffRole()（切換角色）用的權限檢查，跟
+ * 上面 assertCanManage() 的差異只在對象是「老闆」帳號的時候——
+ *
+ * 老闆帳號可能被意外調整角色，導致整間車行沒人能管理：如果目標帳號目前
+ * 的角色就是老闆（tenant_admin），這裡改成「只有本人可以調整自己」，
+ * 其他任何人（包含另一位老闆）都不能代為把別的老闆帳號降級/改角色。
+ * 非老闆帳號（店長/會計/員工）維持原本的規則不變——一樣不能對自己動手，
+ * 得請另一位管理員操作。
+ * 跟資料庫層 remove_staff_from_tenant() RPC 的保護邏輯是同一套設計。
+ */
+async function assertCanChangeRole(targetProfileId: string) {
+  const { profile } = await requireTenantUser();
+
+  if (profile.role !== "tenant_admin") {
+    return { ok: false as const, error: "沒有權限執行這項操作，請聯繫車行管理員。" };
+  }
+
+  const supabase = await createClient();
+  const { data: target } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("id", targetProfileId)
+    .maybeSingle();
+
+  if (target?.role === "tenant_admin") {
+    if (targetProfileId !== profile.id) {
+      return {
+        ok: false as const,
+        error: "老闆帳號只能由本人調整角色，其他人（包含其他老闆）都不能代為操作。",
+      };
+    }
+  } else if (targetProfileId === profile.id) {
+    return { ok: false as const, error: "無法在這裡調整自己的角色/權限，請請另一位管理員協助。" };
+  }
+
+  return { ok: true as const };
+}
+
+/**
  * 切換員工角色：老闆（tenant_admin）／店長（manager）／會計（accountant）／
  * 員工（staff）四選一。
  *
@@ -82,7 +121,7 @@ export async function updateStaffRole(
   targetProfileId: string,
   role: Role
 ): Promise<StaffActionResult> {
-  const check = await assertCanManage(targetProfileId);
+  const check = await assertCanChangeRole(targetProfileId);
   if (!check.ok) return { error: check.error };
 
   if (!MANAGEABLE_ROLES.includes(role)) {

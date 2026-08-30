@@ -71,10 +71,14 @@ export default async function DashboardPage() {
         "id, tenant_id, car_id, item_name, vendor_name, handler_name, amount, receipt_number, status, evidence_url, evidence_path, note, reviewed_at, created_at"
       )
       .order("created_at", { ascending: false }),
+    // 客戶資料隱私保護：這裡不用額外加 .eq("owner_profile_id", ...) 篩選——
+    // RLS policy（customers_owner_or_tenant_admin）已經在資料庫層依目前
+    // 登入者是不是老闆，自動只回傳看得到的那些列，一般員工這裡拿到的
+    // customers 陣列本來就已經是「只有自己名下」的客戶。
     supabase
       .from("customers")
       .select(
-        "id, tenant_id, name, phone, interested_model, budget_min, budget_max, follow_up_status, line_id, note, created_at"
+        "id, tenant_id, name, phone, interested_model, budget_min, budget_max, follow_up_status, line_id, note, owner_profile_id, created_at"
       )
       .order("created_at", { ascending: false }),
     supabase

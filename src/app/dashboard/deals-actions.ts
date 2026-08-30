@@ -152,6 +152,21 @@ export async function updateDeal(
 
   const supabase = await createClient();
 
+  // 2026-08-30 新增：合約一旦建立，車輛就不可以被事後改成別台——前端
+  // deal-form-modal.tsx 編輯模式已經把車輛欄位改成唯讀顯示（不給互動式
+  // 下拉選單），這裡是伺服器端不可被繞過的第二道防線：不管前端傳上來的
+  // car_id 是什麼，一律強制比對資料庫裡這張合約「原本」的 car_id，不一樣
+  // 就直接擋下來，不會被更新。同一次查詢順便拿 status，下面「已交車」
+  // 檢查繼續共用，不用查兩次。
+  const { data: existingDeal } = await supabase.from("deals").select("status, car_id").eq("id", id).maybeSingle();
+
+  if (!existingDeal) {
+    return { error: "找不到這張合約，可能已被刪除。" };
+  }
+  if (existingDeal.car_id !== values.car_id) {
+    return { error: "合約建立後車輛不可更改，請聯繫車行管理員另外處理。" };
+  }
+
   // 2026-08-30：「已交車」是會計/老闆審核完稅金/抽成之後才結案的最後一
   // 步。業務沒有 canManageFinance 權限的話，前端下拉選單已經看不到這個
   // 選項（見 deal-form-modal.tsx 的 availableStatusOptions），這裡再檢查
@@ -159,8 +174,7 @@ export async function updateDeal(
   // 業務照舊存檔其他欄位（例如訂正客戶電話），不會因為這次改動被擋下來；
   // 只有「這次才要把狀態改成已交車」而且沒有這個權限，才會被擋。
   if (values.status === "delivered") {
-    const { data: existingDeal } = await supabase.from("deals").select("status").eq("id", id).maybeSingle();
-    const alreadyDelivered = existingDeal?.status === "delivered";
+    const alreadyDelivered = existingDeal.status === "delivered";
     if (!permissions.canManageFinance && !alreadyDelivered) {
       return { error: "只有會計或老闆能把合約標記為「已交車」，請先送交會計確認稅金與業務抽成。" };
     }
