@@ -31,14 +31,27 @@ export function CarCard({
   onView: (car: Car) => void;
   onEdit: (car: Car) => void;
 }) {
-  // 「成本＋開銷」＝收購價＋已核准整備費＋規費＋稅金，跟 cars-kpi.tsx／
-  // car-maintenance-tab.tsx／analytics-module.tsx 是同一套公式；車輛已
-  // 結帳封存（closed_at 有值）就直接讀封存快照，避免跟真正入帳的數字
-  // 對不起來，理由見 car-maintenance-tab.tsx 的說明。
+  // 2026-08-30：安安反映「成本＋開銷」合在一起看不出來開銷實際花多少，
+  // 希望拆成「成本」（收購進價，進貨要花的錢）跟「開銷」（其他所有支出）
+  // 分開顯示，再顯示一次總和。拆法：
+  //   成本 = 收購進價（car.purchase_price，車輛結帳前後都不會變）
+  //   總計 = 跟原本「成本＋開銷」欄位算法完全一樣（車輛已結帳封存就讀
+  //          closed_total_cost 快照，否則即時算收購價＋已核准整備費＋
+  //          規費＋稅金，見 cars-kpi.tsx／car-maintenance-tab.tsx／
+  //          analytics-module.tsx 的同一套公式）
+  //   開銷 = 總計 − 成本（未結帳＝已核准整備費＋規費＋稅金；已結帳的話
+  //          closed_total_cost 本身連業務抽成都封存進去了，所以已結帳
+  //          車輛的「開銷」這裡也會連帶包含業務抽成，下面的說明文字會
+  //          依結帳與否顯示不同的括號備註，避免看起來兜不起來）。
+  // 用「總計 − 成本」反推「開銷」而不是另外重新加總一次，可以保證
+  // 「成本 + 開銷 = 總計」一定成立，不會因為兩邊各自计算而兜不起來。
+  const purchaseCost = Number(car.purchase_price);
   const totalCost =
     car.closed_at != null
       ? Number(car.closed_total_cost ?? 0)
-      : Number(car.purchase_price) + repairCost + Number(car.transfer_fee ?? 0) + Number(car.tax_amount ?? 0);
+      : purchaseCost + repairCost + Number(car.transfer_fee ?? 0) + Number(car.tax_amount ?? 0);
+  const expenseCost = totalCost - purchaseCost;
+  const expenseLabel = car.closed_at != null ? "開銷（整備＋規費＋稅金＋業務抽成）" : "開銷（整備＋規費＋稅金）";
   return (
     // 2026-08-30：「藝廊卡片」改成大圖卡片——圖片區域從 16/10 拉高到
     // 4/3，讓照片占卡片的比例明顯變大；標題、價格字級也一併放大，
@@ -91,9 +104,24 @@ export function CarCard({
         <div className="mt-3.5 flex items-end justify-between">
           <div>
             {canViewCost && showCost && (
-              <p className="mb-1 text-xs font-semibold text-neutral-600">
-                成本＋開銷 {formatCurrency(totalCost)}
-              </p>
+              <div className="mb-1.5 space-y-0.5 rounded-lg bg-neutral-50 px-2.5 py-1.5">
+                <div className="flex items-center justify-between gap-3 text-xs text-neutral-500">
+                  <span>成本（收購進價）</span>
+                  <span className="font-medium tabular-nums text-neutral-700">
+                    {formatCurrency(purchaseCost)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-3 text-xs text-neutral-500">
+                  <span>{expenseLabel}</span>
+                  <span className="font-medium tabular-nums text-neutral-700">
+                    {formatCurrency(expenseCost)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-3 border-t border-neutral-200 pt-1 text-xs font-semibold text-neutral-800">
+                  <span>成本＋開銷合計</span>
+                  <span className="tabular-nums text-[#A6793D]">{formatCurrency(totalCost)}</span>
+                </div>
+              </div>
             )}
             <p className="text-xs text-neutral-400">開價</p>
             <p className="text-lg font-semibold text-[#A6793D] tabular-nums sm:text-xl">
@@ -102,11 +130,6 @@ export function CarCard({
             {car.floor_price != null && (
               <p className="text-xs text-neutral-400">
                 底價 {canViewCost ? formatCurrency(car.floor_price) : "🔒 權限不足"}
-              </p>
-            )}
-            {repairCost > 0 && (
-              <p className="text-xs text-neutral-400">
-                整備費 {canViewCost ? formatCurrency(repairCost) : "🔒 權限不足"}
               </p>
             )}
           </div>
