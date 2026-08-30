@@ -194,14 +194,24 @@ export function DealFormModal({
     const nextStatus = String(formData.get("status") ?? "draft");
     if (nextStatus !== "delivered" || previousStatus === "delivered") return;
 
+    // 2026-08-30 修正：這裡原本檢查的是試算小工具的暫存欄位
+    // （taxPercent/taxFixed/commissionPercent/commissionFixed），但這幾個
+    // input 完全沒有 name 屬性，不會進 FormData、也不是真正存進資料庫的
+    // 欄位——使用者只要在試算工具隨便打個數字、卻忘記按「帶入上方抽成
+    // 欄位」，這裡的檢查就會誤判成「已經填過」而放行，結果實際存檔的
+    // 「預估抽成」（commission_amount，真正會被結帳快照跟業務薪資模組
+    // 讀取的欄位）反而是空的。改成直接檢查 FormData 裡 commission_amount
+    // 這個真正會送出的欄位有沒有值，才能保證「已交車」的合約一定有抽成
+    // 數字可用；稅金因為只是試算小工具的輔助計算，deals 資料表本身沒有
+    // 對應欄位可以存，維持原本用暫存欄位判斷「至少填過一次」即可。
     const taxFilled = taxMode === "percent" ? taxPercent.trim() !== "" : taxFixed.trim() !== "";
-    const commissionFilled =
-      commissionMode === "percent" ? commissionPercent.trim() !== "" : commissionFixed.trim() !== "";
+    const commissionAmountRaw = formData.get("commission_amount");
+    const commissionFilled = commissionAmountRaw != null && String(commissionAmountRaw).trim() !== "";
 
     if (!taxFilled || !commissionFilled) {
       e.preventDefault();
       setValidationError(
-        "合約狀態要改成「已交車」之前，請先在下面「🧮 業務薪水試算」把「我們平常的稅金」與「業務抽成」都填上數字（沒有的話可以填 0），至少要填過一次。"
+        "合約狀態要改成「已交車」之前，請先在下面「🧮 業務薪水試算」填好「我們平常的稅金」，並確認上面「預估抽成」欄位已經有數字（沒有的話可以填 0，或按「帶入上方抽成欄位」直接帶入試算結果）。"
       );
     }
   }
