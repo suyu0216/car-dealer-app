@@ -50,6 +50,10 @@ interface ParsedCar {
   floor_price: number | null;
   selling_price: number | null;
   final_price: number | null;
+  /** 真實最終成本，只有 canViewFinalCost 的人送出的值才會真的寫進資料庫
+   * （見 createCar/updateCar 怎麼把這欄從 restValues 拆出來、依權限決定
+   * 要不要放進 insert/update payload）。 */
+  final_cost_price: number | null;
   // 進貨與付款追蹤
   paid_amount: number | null;
   payment_method: PaymentMethod | null;
@@ -296,6 +300,7 @@ function parseCarForm(formData: FormData): ParsedCar {
     floor_price: optionalMoney(formData, "floor_price", "底價"),
     selling_price: optionalMoney(formData, "selling_price", "開價"),
     final_price: optionalMoney(formData, "final_price", "最終成交價"),
+    final_cost_price: optionalMoney(formData, "final_cost_price", "最終成本價格"),
     paid_amount: optionalMoney(formData, "paid_amount", "已付金額"),
     payment_method: optionalEnum(formData, "payment_method", VALID_PAYMENT_METHODS, "付款方式"),
     payment_note: optionalText(formData, "payment_note"),
@@ -324,10 +329,11 @@ export async function createCar(
 ): Promise<CarFormState> {
   // 驗證登入身份、角色，並確認已被指派車行；車輛一律綁在自己的車行底下。
   const { profile } = await requireTenantUser();
+  const permissions = getEffectivePermissions(profile);
 
   // RBAC：前端「+新增車輛」按鈕已經會依權限隱藏，這裡是後端第二道防線
   // ——避免一般業務繞過前端、直接呼叫這支 Server Action。
-  if (!getEffectivePermissions(profile).canEditCars) {
+  if (!permissions.canEditCars) {
     return { error: "沒有權限新增車輛，請聯繫車行管理員開啟「新增/編輯車輛資料」權限。" };
   }
 
@@ -356,11 +362,19 @@ export async function createCar(
   // 新車不可能「已經」被標記過人頭（alreadyUsedAsNominee 一律 false），
   // 這裡只是要把原始的 nominee_* 欄位從 values 拆出來，改用
   // computeNomineeFields() 的回傳值，跟 updateCar 走同一套邏輯、行為一致。
-  const { nominee_company, nominee_days, nominee_start_date, id_return_date, ...restValues } = values;
+  // final_cost_price 也拆出來另外處理——只有 canViewFinalCost 的人送出
+  // 的值才會真的寫進資料庫，見下面 finalCostField 的說明。
+  const { nominee_company, nominee_days, nominee_start_date, id_return_date, final_cost_price, ...restValues } =
+    values;
   const nomineeFields = computeNomineeFields(
     { nominee_company, nominee_days, nominee_start_date, id_return_date },
     false
   );
+  // 2026-08-31：沒有 canViewFinalCost 權限的人，這個 key 完全不會出現在
+  // insert payload 裡（不是帶 null）——這個人本來就看不到真實最終成本，
+  // 表單上這個欄位也不會渲染，就算有人繞過前端硬塞一個值上來，這裡也
+  // 一律忽略，不會被寫進資料庫。
+  const finalCostField = permissions.canViewFinalCost ? { final_cost_price } : {};
 
   // 先建立車輛列，拿到 id 之後才知道照片要上傳到哪個路徑
   // （<tenant_id>/<car_id>/...），所以照片一定是第二步驟。
@@ -370,6 +384,7 @@ export async function createCar(
       ...restValues,
       ...nomineeFields,
       ...closingFields,
+      ...finalCostField,
       tenant_id: profile.tenant_id!,
       // 上架人：記錄是誰在系統裡新增這輛車，只在新增當下寫入一次，之後
       // 編輯車輛（updateCar）不會、也不應該覆蓋這欄，見 types.ts 對
@@ -419,8 +434,9 @@ export async function updateCar(
   formData: FormData
 ): Promise<CarFormState> {
   const { profile } = await requireTenantUser();
+  const permissions = getEffectivePermissions(profile);
 
-  if (!getEffectivePermissions(profile).canEditCars) {
+  if (!permissions.canEditCars) {
     return { error: "沒有權限編輯車輛，請聯繫車行管理員開啟「新增/編輯車輛資料」權限。" };
   }
 
@@ -458,11 +474,20 @@ export async function updateCar(
   // 一律忽略（見 computeNomineeFields() 的說明），不會覆蓋既有紀錄，也
   // 不允許重新登記——前端會把這幾個欄位設成 disabled，這裡是後端不可被
   // 繞過的第二道防線。
-  const { nominee_company, nominee_days, nominee_start_date, id_return_date, ...restValues } = values;
+  // final_cost_price 一樣拆出來另外處理——見下面 finalCostField 的說明。
+  const { nominee_company, nominee_days, nominee_start_date, id_return_date, final_cost_price, ...restValues } =
+    values;
   const nomineeFields = computeNomineeFields(
     { nominee_company, nominee_days, nominee_start_date, id_return_date },
     existingCar?.has_used_as_nominee === true
   );
+  // 2026-08-31：沒有 canViewFinalCost 權限的人，這個 key 完全不會出現在
+  // update payload 裡（不是帶 null）——Supabase update 沒帶到的欄位不會
+  // 被覆蓋，這個人本來就看不到真實最終成本，沒辦法、也不應該把它「原封
+  // 不動送回去」（不像其他成本欄位那樣可以靠隱藏欄位保留原值——因為這
+  // 個人的瀏覽器一開始就沒拿到真實的 final_cost_price，見 page.tsx 怎麼
+  // 在資料離開伺服器前就先清掉）。
+  const finalCostField = permissions.canViewFinalCost ? { final_cost_price } : {};
 
   // 只有真的選了新照片才上傳並覆蓋 image_url；沒選檔案就完全不碰這個欄位，
   // 保留原本的照片，不會因為編輯其他欄位而把照片清掉。
@@ -471,10 +496,14 @@ export async function updateCar(
   // 整筆存檔都失敗，只記 log、image_url 維持原樣即可。
   let photoWarning: string | undefined;
   const photo = formData.get("photo");
-  const updatePayload: typeof restValues & NomineeFields & ClosingFields & { image_url?: string } = {
+  const updatePayload: typeof restValues &
+    NomineeFields &
+    ClosingFields &
+    typeof finalCostField & { image_url?: string } = {
     ...restValues,
     ...nomineeFields,
     ...closingFields,
+    ...finalCostField,
   };
   if (photo instanceof File && photo.size > 0) {
     try {

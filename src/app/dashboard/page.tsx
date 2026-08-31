@@ -62,7 +62,7 @@ export default async function DashboardPage() {
         // 影響），只是後台畫面重新整理後看起來又「跳回」未勾選，容易讓人
         // 誤以為存檔失敗、忍不住重複勾選重存。三個都補進來後，表單/卡片/
         // 列表才會忠實反映資料庫目前的值。
-        "id, tenant_id, brand, model_name, year, license_year, mileage, engine_cc, transmission, color, license_plate, vin, certification, equipment_tags, condition_notes, status, purchase_price, transfer_fee, detailing_cost, repair_cost, floor_price, selling_price, final_price, closed_at, closed_prep_cost, closed_total_cost, paid_amount, payment_method, payment_note, purchased_by, transfer_date, transfer_status, inspection_agency, inspection_date, inspection_status, nominee_company, nominee_days, nominee_start_date, id_return_date, has_used_as_nominee, is_public, body_type, is_featured, is_large_card, image_url, created_by, created_at, deleted_at"
+        "id, tenant_id, brand, model_name, year, license_year, mileage, engine_cc, transmission, color, license_plate, vin, certification, equipment_tags, condition_notes, status, purchase_price, transfer_fee, detailing_cost, repair_cost, floor_price, selling_price, final_price, final_cost_price, closed_at, closed_prep_cost, closed_total_cost, paid_amount, payment_method, payment_note, purchased_by, transfer_date, transfer_status, inspection_agency, inspection_date, inspection_status, nominee_company, nominee_days, nominee_start_date, id_return_date, has_used_as_nominee, is_public, body_type, is_featured, is_large_card, image_url, created_by, created_at, deleted_at"
       )
       .order("created_at", { ascending: false }),
     supabase
@@ -84,7 +84,7 @@ export default async function DashboardPage() {
     supabase
       .from("deals")
       .select(
-        "id, tenant_id, car_id, customer_id, customer_name, customer_phone, final_price, deposit_amount, balance_amount, loan_status, salesperson_id, commission_amount, status, note, created_at"
+        "id, tenant_id, car_id, customer_id, customer_name, customer_phone, final_price, deposit_amount, balance_amount, deposit_payment_method, balance_payment_method, loan_status, salesperson_id, commission_amount, status, note, created_at"
       )
       .order("created_at", { ascending: false }),
     supabase
@@ -121,7 +121,15 @@ export default async function DashboardPage() {
     return <OnboardingWizard tenant={tenantInfo} />;
   }
 
-  const carList = (cars ?? []) as Car[];
+  // 2026-08-31：「最終成本價格」比一般的 canViewCost 更嚴格（見
+  // permissions.ts 對 canViewFinalCost 的說明）——跟其他成本欄位不一樣，
+  // 這欄不能只靠前端畫面隱藏就算數，因為 Server Component 的資料本來就
+  // 會整包序列化送到瀏覽器（RSC payload），沒有 canViewFinalCost 的人
+  // 就算畫面上看不到，用瀏覽器開發者工具還是挖得出來。這裡在資料離開
+  // 伺服器之前就先清掉，沒有權限的人從一開始就拿不到這個數字。
+  const carList = ((cars ?? []) as Car[]).map((car) =>
+    permissions.canViewFinalCost ? car : { ...car, final_cost_price: null }
+  );
   const repairItemList = (repairItems ?? []) as RepairItem[];
   const customerList = (customers ?? []) as Customer[];
   const dealList = (deals ?? []) as Deal[];
