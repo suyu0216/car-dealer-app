@@ -12,7 +12,10 @@ type CashPoolCar = {
   id: string;
   brand: string | null;
   model_name: string;
-  paid_amount: number | null;
+  // 2026-08-31：「資金總覽」水池的進貨付款金額改讀 purchase_price（真正
+  // 認列成本、必填），不再讀容易被忘記填的 paid_amount——見
+  // cash-pool.ts 開頭的說明。
+  purchase_price: number;
   payment_method: "bank_transfer" | "debt_settlement" | "cash" | null;
   created_at: string;
   /** 這輛車結帳（售出）封存的當下時間——「薪資單」分頁拿這個欄位判斷
@@ -43,6 +46,10 @@ type PayrollDeal = {
   salesperson_id: string | null;
   commission_amount: number | null;
   created_at: string;
+  /** 2026-08-31 新增：合約第一次交車的時間戳記——「資金總覽」水池的
+   * 尾款事件改用這個判斷起算點/顯示日期，不再誤用合約建立日
+   * （created_at），見 cash-pool.ts 開頭的說明。 */
+  delivered_at: string | null;
 };
 
 type ManualTransaction = {
@@ -53,6 +60,23 @@ type ManualTransaction = {
   date: string;
   category: string;
   note: string | null;
+};
+
+/** 2026-08-31 新增：「資金總覽」水池要用的請款撥款資料——只挑會計核准
+ * 撥款當下才會有值的欄位，跟「維修請款與會計」分頁另外撈的完整
+ * RepairItem 資料是分開的兩份查詢（那份在 dashboard/page.tsx，這裡的
+ * accounting/page.tsx 是獨立的 client component，本來就各自撈自己
+ * 需要的資料，不共用）。 */
+type CashPoolRepairItem = {
+  id: string;
+  car_id: string;
+  item_name: string;
+  category: string;
+  amount: number;
+  status: "pending" | "approved" | "rejected";
+  payment_method: "cash" | "bank" | null;
+  reviewed_at: string | null;
+  created_at: string;
 };
 
 type StaffOption = { id: string; name: string | null };
@@ -149,6 +173,9 @@ export default function AccountingPage() {
   const [cashPoolCars, setCashPoolCars] = useState<CashPoolCar[]>([]);
   const [payrollDeals, setPayrollDeals] = useState<PayrollDeal[]>([]);
   const [manualTransactions, setManualTransactions] = useState<ManualTransaction[]>([]);
+  // 2026-08-31 新增：已核准的維修/整備請款撥款——「資金總覽」水池深度
+  // 檢查後補上的第五個資料來源，見 cash-pool.ts 開頭的說明。
+  const [cashPoolRepairItems, setCashPoolRepairItems] = useState<CashPoolRepairItem[]>([]);
   const [staffList, setStaffList] = useState<StaffOption[]>([]);
 
   // 表單 State
@@ -277,24 +304,33 @@ export default function AccountingPage() {
       }
     }
 
-    const [{ data: carsData }, { data: dealsData }, { data: txData }, { data: staffData }] = await Promise.all([
-      supabase
-        .from("cars")
-        .select(
-          "id, brand, model_name, paid_amount, payment_method, created_at, closed_at, status, final_price, selling_price, closed_total_cost"
-        ),
-      supabase
-        .from("deals")
-        .select(
-          "id, car_id, customer_name, final_price, deposit_amount, balance_amount, deposit_payment_method, balance_payment_method, status, salesperson_id, commission_amount, created_at"
-        ),
-      supabase.from("transactions").select("*").order("date", { ascending: false }),
-      supabase.from("profiles").select("id, name").order("name"),
-    ]);
+    const [{ data: carsData }, { data: dealsData }, { data: txData }, { data: staffData }, { data: repairData }] =
+      await Promise.all([
+        supabase
+          .from("cars")
+          .select(
+            "id, brand, model_name, purchase_price, payment_method, created_at, closed_at, status, final_price, selling_price, closed_total_cost"
+          ),
+        supabase
+          .from("deals")
+          .select(
+            "id, car_id, customer_name, final_price, deposit_amount, balance_amount, deposit_payment_method, balance_payment_method, status, salesperson_id, commission_amount, created_at, delivered_at"
+          ),
+        supabase.from("transactions").select("*").order("date", { ascending: false }),
+        supabase.from("profiles").select("id, name").order("name"),
+        // 2026-08-31 新增：只有「已核准」的請款才可能是真的撥款出去，這裡
+        // 撈全部狀態回來（不加 .eq("status","approved")）是因為 pending/
+        // rejected 的筆數通常很少，直接交給 computeCashPoolSummary 自己
+        // 依 status 過濾即可，不用維護兩套查詢條件。
+        supabase
+          .from("repair_items")
+          .select("id, car_id, item_name, category, amount, status, payment_method, reviewed_at, created_at"),
+      ]);
     if (carsData) setCashPoolCars(carsData as CashPoolCar[]);
     if (dealsData) setPayrollDeals(dealsData as PayrollDeal[]);
     if (txData) setManualTransactions(txData as ManualTransaction[]);
     if (staffData) setStaffList(staffData as StaffOption[]);
+    if (repairData) setCashPoolRepairItems(repairData as CashPoolRepairItem[]);
     return true;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -804,6 +840,7 @@ export default function AccountingPage() {
             title: e.title,
           }))}
           manualTransactions={manualTransactions}
+          repairItems={cashPoolRepairItems}
           onDataChanged={fetchSharedData}
         />
       )}
