@@ -29,6 +29,8 @@ const TYPE_ICON: Record<Notification["type"], string> = {
   // 2026-08 新增：公開展間「我要估車」表單送出時觸發，見
   // trade-in-actions.ts 的 submitTradeInRequest()。
   trade_in_request_created: "🚙",
+  // 2026-08-31 新增：新增車輛入庫沒填底價，見 cars-actions.ts。
+  car_floor_price_missing: "🏷️",
 };
 
 function relativeTime(iso: string): string {

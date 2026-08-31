@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import type { Car, RepairItem } from "@/lib/supabase/types";
 import type { EffectivePermissions } from "@/lib/permissions";
 import { CarsKpi } from "./cars-kpi";
@@ -73,6 +74,24 @@ export function CarsManager({
   const [view, setView] = useState<"table" | "gallery">("gallery");
   const [showTrash, setShowTrash] = useState(false);
   const [modalState, setModalState] = useState<ModalState>(null);
+
+  // 2026-08-31 新增：從「新車入庫，尚待填寫底價」通知點進來的話，網址會
+  // 帶 ?highlight=<car_id>——跟 company-expenses-module.tsx／
+  // maintenance-module.tsx 那種「捲到並反白該筆」不一樣，這裡會計真正
+  // 要做的事是「把底價補上」，所以不只是捲動反白，而是直接自動開啟那輛
+  // 車的編輯表單（跟平常點「編輯」按鈕開出來的是同一個 Modal），點通知
+  // 就能直接跳進去填底價，不用自己再從一長串車輛清單裡找。用 useRef
+  // 記住「已經自動開過的 highlightId」，避免使用者手動關掉表單後，這個
+  // effect 因為 cars 或其他依賴重新執行又把它硬打開、關不掉。
+  const highlightId = useSearchParams().get("highlight");
+  const autoOpenedHighlightRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!highlightId || autoOpenedHighlightRef.current === highlightId) return;
+    const target = cars.find((c) => c.id === highlightId);
+    if (!target) return;
+    autoOpenedHighlightRef.current = highlightId;
+    setModalState({ mode: "edit", car: target });
+  }, [highlightId, cars]);
 
   // 2026-08-30 新增：大圖卡片（藝廊卡片）上「成本＋開銷」那一行的顯示
   // 開關——安安想要一眼看到每台車目前的成本+開銷，但也要能自己選擇要

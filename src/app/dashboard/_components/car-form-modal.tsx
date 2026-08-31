@@ -85,6 +85,16 @@ export function CarFormModal({
   const { onChange: onPhotoChange, compressing: photoCompressing } = useImageCompressOnChange();
   const { markDirty, requestClose } = useUnsavedChangesGuard(() => onClose());
 
+  // 2026-08-31 新增：安安要求「新增車輛入庫」時，里程/年份/顏色/排氣量/
+  // 車牌號碼/照片/開價/車型分類這幾項一定要填，不然不給新增——但只限
+  // 「新增」當下，不回頭要求既有車輛的編輯也要補齊（避免舊資料缺這些
+  // 欄位的車，之後想改個別的欄位卻被卡住存不了檔）。「底價」刻意不在
+  // 這個必填清單裡：底價屬於成本類敏感資訊，預設員工看不到、也填不到
+  // 這個欄位（見 canViewCost），員工正是負責新增車輛入庫的人，勉強列
+  // 為必填員工也做不到；改成新增時如果沒有底價，自動發一則通知提醒
+  // 會計/老闆回頭補填（見 cars-actions.ts 的 createCar()）。
+  const requireOnCreate = mode === "create";
+
   // 新增/更新成功後自動關閉彈窗；cars-actions.ts 已經呼叫
   // revalidatePath("/dashboard")，所以關閉當下背後的表格資料已經是最新的，
   // 不需要整頁重新整理。這裡直接呼叫 onClose()、不走 requestClose()，
@@ -149,10 +159,31 @@ export function CarFormModal({
             </datalist>
 
             <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <Field label="出廠年份" name="year" type="number" defaultValue={car?.year?.toString() ?? ""} placeholder="2022" />
+              <Field
+                label={requireOnCreate ? "出廠年份 *" : "出廠年份"}
+                name="year"
+                type="number"
+                defaultValue={car?.year?.toString() ?? ""}
+                placeholder="2022"
+                required={requireOnCreate}
+              />
               <Field label="領牌年份" name="license_year" type="number" defaultValue={car?.license_year?.toString() ?? ""} placeholder="2022" />
-              <Field label="里程數 (km)" name="mileage" type="number" defaultValue={car?.mileage?.toString() ?? ""} placeholder="18500" />
-              <Field label="排氣量 (cc)" name="engine_cc" type="number" defaultValue={car?.engine_cc?.toString() ?? ""} placeholder="1998" />
+              <Field
+                label={requireOnCreate ? "里程數 (km) *" : "里程數 (km)"}
+                name="mileage"
+                type="number"
+                defaultValue={car?.mileage?.toString() ?? ""}
+                placeholder="18500"
+                required={requireOnCreate}
+              />
+              <Field
+                label={requireOnCreate ? "排氣量 (cc) *" : "排氣量 (cc)"}
+                name="engine_cc"
+                type="number"
+                defaultValue={car?.engine_cc?.toString() ?? ""}
+                placeholder="1998"
+                required={requireOnCreate}
+              />
             </div>
 
             <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
@@ -163,8 +194,20 @@ export function CarFormModal({
                 list="transmission-options"
                 placeholder="選擇或自行輸入"
               />
-              <Field label="車色" name="color" defaultValue={car?.color ?? ""} placeholder="白色" />
-              <Field label="車牌號碼" name="license_plate" defaultValue={car?.license_plate ?? ""} placeholder="ABC-1234" />
+              <Field
+                label={requireOnCreate ? "車色 *" : "車色"}
+                name="color"
+                defaultValue={car?.color ?? ""}
+                placeholder="白色"
+                required={requireOnCreate}
+              />
+              <Field
+                label={requireOnCreate ? "車牌號碼 *" : "車牌號碼"}
+                name="license_plate"
+                defaultValue={car?.license_plate ?? ""}
+                placeholder="ABC-1234"
+                required={requireOnCreate}
+              />
             </div>
             <datalist id="transmission-options">
               {TRANSMISSION_OPTIONS.map((t) => (
@@ -177,12 +220,15 @@ export function CarFormModal({
             </div>
 
             <div className="mt-3">
-              <label className="block text-sm font-medium text-neutral-700">車輛照片</label>
+              <label className="block text-sm font-medium text-neutral-700">
+                {requireOnCreate ? "車輛照片 *" : "車輛照片"}
+              </label>
               <input
                 type="file"
                 name="photo"
                 accept="image/*"
                 onChange={onPhotoChange}
+                required={requireOnCreate}
                 className="mt-1 block w-full text-sm text-neutral-600 file:mr-3 file:rounded-lg file:border-0 file:bg-[#BFA074] file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-white hover:file:bg-[#AD9066]"
               />
               {photoCompressing && (
@@ -246,10 +292,11 @@ export function CarFormModal({
           <FormSection title="定價（新台幣 NT$）">
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
               <Field
-                label="展示開價"
+                label={requireOnCreate ? "展示開價 *" : "展示開價"}
                 name="selling_price"
                 type="number"
                 defaultValue={car?.selling_price != null ? String(car.selling_price) : ""}
+                required={requireOnCreate}
               />
               {canViewCost ? (
                 <>
@@ -545,21 +592,28 @@ export function CarFormModal({
             </div>
             <div>
               {/* 車型分類——給前台展間頁上方的分類選單用（小型車/房車/休旅車/
-                  跑車/商用車），選填，沒選就是「未分類」，展間分類選單裡
-                  不會出現這台車，但車輛本身還是照常顯示在「全部車輛」。 */}
+                  跑車/商用車）。2026-08-31 起新增車輛時一定要選一個分類，
+                  「未分類」選項改成 disabled（只在編輯既有的未分類車輛時
+                  當作目前值顯示，不能在新增時被選中）；編輯既有車輛則
+                  維持原本可以留白/選未分類的彈性，不回頭強制補選。沒選
+                  分類的車輛，展間分類選單裡不會出現，但車輛本身還是照常
+                  顯示在「全部車輛」。 */}
               <label
                 htmlFor="body_type"
                 className="block text-sm font-medium text-neutral-700"
               >
-                車型分類
+                {requireOnCreate ? "車型分類 *" : "車型分類"}
               </label>
               <select
                 id="body_type"
                 name="body_type"
                 defaultValue={car?.body_type ?? ""}
+                required={requireOnCreate}
                 className={INPUT_CLASS + " mt-1"}
               >
-                <option value="">未分類</option>
+                <option value="" disabled={requireOnCreate}>
+                  未分類
+                </option>
                 {VALID_BODY_TYPES.map((type) => (
                   <option key={type} value={type}>
                     {type}
