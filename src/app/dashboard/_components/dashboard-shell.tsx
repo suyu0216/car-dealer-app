@@ -185,6 +185,7 @@ export function DashboardShell({
             customers={customers}
             staff={staff}
             canManageFinance={permissions.canManageFinance}
+            canViewFinalCost={permissions.canViewFinalCost}
             tenantName={tenantName}
             repairItems={repairItems}
           />

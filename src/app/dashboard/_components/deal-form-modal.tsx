@@ -25,6 +25,7 @@ export function DealFormModal({
   staff,
   repairItems,
   canManageFinance,
+  canViewFinalCost,
   onClose,
 }: {
   mode: "create" | "edit";
@@ -36,6 +37,12 @@ export function DealFormModal({
    * canManageFinance 的人看得到這個試算工具，業務就算拿到這個 prop 也
    * 看不到用不到，見下面的說明。 */
   repairItems: RepairItem[];
+  /** 2026-08-31 新增：安安反映「成本細項」算完淨利之後，還要能看到
+   * 「底價」跟「收價（收購進價）」中間的差額——這是比 canManageFinance
+   * 更敏感的數字（等於揭露車行實際的議價空間下限），只給會計/老闆看，
+   * 店長就算有 canManageFinance 也看不到，見 permissions.ts 對
+   * canViewFinalCost 的說明。 */
+  canViewFinalCost: boolean;
   /** 2026-08-30：合約流程是業務填寫送出（草約/已簽約），交給會計審核填
    * 稅金/業務抽成、確認無誤後才把合約標記為「已交車」結案——不是老闆
    * 自己一個個填，也不是業務自己填自己的抽成。所以這裡改用
@@ -551,6 +558,19 @@ export function DealFormModal({
                           <span>成交價</span>
                           <span className="tabular-nums">{revenue != null ? formatCurrency(revenue) : "—"}</span>
                         </div>
+                        {/* 2026-08-31 新增：底價與收購進價（收價）中間的差額——
+                            只有會計/老闆（canViewFinalCost）看得到，比
+                            canManageFinance 更嚴格，店長就算能用這整個試算
+                            工具也看不到這一行。沒填底價（floor_price 是
+                            null）的車輛不顯示這行，不誤算成 0 元差額。 */}
+                        {canViewFinalCost && selectedCar.floor_price != null && (
+                          <div className="flex items-center justify-between border-t border-neutral-100 pt-1 text-[#8A6D3B]">
+                            <span>底價與收購進價差額（僅會計/老闆可見）</span>
+                            <span className="tabular-nums">
+                              {formatCurrency(selectedCar.floor_price - costBreakdown.purchasePrice)}
+                            </span>
+                          </div>
+                        )}
                       </div>
                     )}
 

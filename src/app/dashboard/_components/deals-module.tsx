@@ -26,6 +26,7 @@ export function DealsModule({
   customers,
   staff,
   canManageFinance,
+  canViewFinalCost,
   tenantName,
   repairItems,
 }: {
@@ -37,6 +38,11 @@ export function DealsModule({
    * 把合約標記成「已交車」——業務只能把合約填到草約/已簽約，交給會計
    * 結案，見 deal-form-modal.tsx 開頭的說明。 */
   canManageFinance: boolean;
+  /** 2026-08-31 新增：比 canManageFinance 更嚴格——只有會計/老闆
+   * （accountant/tenant_admin）能看到「成本細項」裡底價與收購進價的
+   * 差額，見 deal-form-modal.tsx 開頭的說明跟 permissions.ts 對
+   * canViewFinalCost 的說明。 */
+  canViewFinalCost: boolean;
   tenantName?: string;
   /** 給「業務薪水試算小工具」算選中車輛的已核准整備費用，見
    * deal-form-modal.tsx 開頭的說明。 */
@@ -145,6 +151,7 @@ export function DealsModule({
           customers={customers}
           staff={staff}
           canManageFinance={canManageFinance}
+          canViewFinalCost={canViewFinalCost}
           repairItems={repairItems}
           onClose={() => setModalState(null)}
         />
