@@ -327,6 +327,7 @@ export function CarsManager({
           canReview={permissions.canApproveRepairs}
           canViewCost={permissions.canViewCost}
           canViewCommission={canViewCommission}
+          canViewFinalCost={permissions.canViewFinalCost}
           canEditCars={permissions.canEditCars}
           tenantName={tenantName}
           repairItems={repairItems.filter((r) => r.car_id === modalState.car.id)}
@@ -342,6 +343,7 @@ export function CarsManager({
           mode={modalState.mode}
           car={modalState.mode === "edit" ? modalState.car : undefined}
           canViewCost={permissions.canViewCost}
+          canViewFinalCost={permissions.canViewFinalCost}
           staff={staff}
           onClose={closeFormModal}
         />

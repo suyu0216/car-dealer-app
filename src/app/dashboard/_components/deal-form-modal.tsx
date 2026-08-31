@@ -278,44 +278,96 @@ export function DealFormModal({
             )}
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-neutral-700">選定客戶（可選）</label>
-            <select
-              value={customerId}
-              onChange={(e) => handleSelectCustomer(e.target.value)}
-              className={INPUT_CLASS}
-            >
-              <option value="">不指定 CRM 客戶，直接手動輸入</option>
-              {customers.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                  {c.phone ? `（${c.phone}）` : ""}
-                </option>
-              ))}
-            </select>
-          </div>
+          {/* 2026-08-31：安安反映一般業務/店長建立合約時，不該開放手動
+              打一個新客戶姓名就結案——那樣客戶的聯絡方式跟後續需求就
+              不會留在「客戶管理」（CRM）裡。canManageFinance（會計/老闆）
+              維持原本可以不指定/手動輸入的彈性；其餘角色一律要從既有
+              客戶選，姓名/電話改唯讀自動帶入，伺服器端 deals-actions.ts
+              的 resolveCustomerFields() 也會擋掉任何繞過前端的嘗試。 */}
+          {canManageFinance ? (
+            <>
+              <div>
+                <label className="block text-sm font-medium text-neutral-700">選定客戶（可選）</label>
+                <select
+                  value={customerId}
+                  onChange={(e) => handleSelectCustomer(e.target.value)}
+                  className={INPUT_CLASS}
+                >
+                  <option value="">不指定 CRM 客戶，直接手動輸入</option>
+                  {customers.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                      {c.phone ? `（${c.phone}）` : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-sm font-medium text-neutral-700">客戶姓名</label>
-              <input
-                name="customer_name"
-                value={customerName}
-                onChange={(e) => setCustomerName(e.target.value)}
-                required
-                className={INPUT_CLASS}
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-neutral-700">客戶電話</label>
-              <input
-                name="customer_phone"
-                value={customerPhone}
-                onChange={(e) => setCustomerPhone(e.target.value)}
-                className={INPUT_CLASS}
-              />
-            </div>
-          </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-medium text-neutral-700">客戶姓名</label>
+                  <input
+                    name="customer_name"
+                    value={customerName}
+                    onChange={(e) => setCustomerName(e.target.value)}
+                    required
+                    className={INPUT_CLASS}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-neutral-700">客戶電話</label>
+                  <input
+                    name="customer_phone"
+                    value={customerPhone}
+                    onChange={(e) => setCustomerPhone(e.target.value)}
+                    className={INPUT_CLASS}
+                  />
+                </div>
+              </div>
+            </>
+          ) : (
+            <>
+              <div>
+                <label className="block text-sm font-medium text-neutral-700">選定客戶</label>
+                <select
+                  value={customerId}
+                  onChange={(e) => handleSelectCustomer(e.target.value)}
+                  required
+                  className={INPUT_CLASS}
+                >
+                  <option value="" disabled>
+                    {customers.length === 0 ? "尚未有客戶資料" : "請選擇客戶"}
+                  </option>
+                  {customers.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                      {c.phone ? `（${c.phone}）` : ""}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1 text-xs text-neutral-400">
+                  {customers.length === 0
+                    ? "目前「客戶管理」裡還沒有資料，請先到那邊新增這位客戶，再回來建立合約。"
+                    : "一律要從既有客戶裡選擇，不開放手動輸入新客戶資料——這樣客戶的聯絡方式跟未來需求才會留在「客戶管理」裡，不會因為合約結案就找不到人。"}
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-medium text-neutral-700">客戶姓名</label>
+                  <div className={INPUT_CLASS + " cursor-not-allowed bg-neutral-100 text-neutral-500"}>
+                    {customerName || "—"}
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-neutral-700">客戶電話</label>
+                  <div className={INPUT_CLASS + " cursor-not-allowed bg-neutral-100 text-neutral-500"}>
+                    {customerPhone || "—"}
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
 
           <div className="grid grid-cols-3 gap-3">
             <div>
@@ -348,20 +400,45 @@ export function DealFormModal({
             />
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-neutral-700">收款方式（訂金＋尾款）</label>
-            <select name="payment_method" defaultValue={deal?.payment_method ?? ""} className={INPUT_CLASS}>
-              <option value="">尚未收款／不指定</option>
-              {CASH_POOL_METHOD_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-            <p className="mt-1 text-xs text-neutral-400">
-              給後台「資金總覽」水池分類用——客人這筆錢是付現金還是匯款進來。
-            </p>
+          {/* 2026-08-31：訂金／尾款分開記錄收款方式——安安反映實務上訂金
+              常常是現金、尾款才走匯款（或反過來），舊版單一「收款方式
+              （訂金＋尾款）」欄位沒辦法反映，導致「資金總覽」水池對不
+              起來。改成兩個獨立下拉選單，各自對應各自的金額。 */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-sm font-medium text-neutral-700">訂金收款方式</label>
+              <select
+                name="deposit_payment_method"
+                defaultValue={deal?.deposit_payment_method ?? ""}
+                className={INPUT_CLASS}
+              >
+                <option value="">尚未收款／不指定</option>
+                {CASH_POOL_METHOD_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-neutral-700">尾款收款方式</label>
+              <select
+                name="balance_payment_method"
+                defaultValue={deal?.balance_payment_method ?? ""}
+                className={INPUT_CLASS}
+              >
+                <option value="">尚未收款／不指定</option>
+                {CASH_POOL_METHOD_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
+          <p className="-mt-2 text-xs text-neutral-400">
+            給後台「資金總覽」水池分類用——訂金、尾款各自是付現金還是匯款進來，交車前才收到的尾款可以先留空，等實際收款後再回來補選。
+          </p>
 
           <div className="grid grid-cols-2 gap-3">
             <Field

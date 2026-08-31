@@ -18,7 +18,15 @@ import type { Car, CompanyExpense, Deal, Tenant, Transaction, TransactionType } 
 type TenantPoolFields = Pick<Tenant, "cash_opening_balance" | "bank_opening_balance" | "cash_pool_started_at">;
 type DealSlice = Pick<
   Deal,
-  "id" | "final_price" | "deposit_amount" | "balance_amount" | "payment_method" | "status" | "created_at" | "customer_name"
+  | "id"
+  | "final_price"
+  | "deposit_amount"
+  | "balance_amount"
+  | "deposit_payment_method"
+  | "balance_payment_method"
+  | "status"
+  | "created_at"
+  | "customer_name"
 >;
 type CarSlice = Pick<Car, "id" | "paid_amount" | "payment_method" | "created_at" | "brand" | "model_name">;
 

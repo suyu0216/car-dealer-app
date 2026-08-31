@@ -50,6 +50,7 @@ export function CarFormModal({
   mode,
   car,
   canViewCost,
+  canViewFinalCost,
   staff,
   onClose,
 }: {
@@ -63,6 +64,13 @@ export function CarFormModal({
    * 不算敏感資訊，一律顯示。
    */
   canViewCost: boolean;
+  /**
+   * 2026-08-31 新增：可以檢視/填寫「最終成本價格」——比 canViewCost 更
+   * 嚴格，預設只有會計/老闆看得到（見 permissions.ts 的 canViewFinalCost
+   * 說明）。這個欄位獨立於 canViewCost 之外：即使某人有 canViewCost（例如
+   * 預設看得到成本的店長），沒有 canViewFinalCost 一樣看不到、填不到這欄。
+   */
+  canViewFinalCost: boolean;
   /** 「採購業務」下拉選單用——同車行的員工清單。 */
   staff: { id: string; name: string | null }[];
   /**
@@ -302,6 +310,27 @@ export function CarFormModal({
                   placeholder="每台車稅率不同，請自行填實際金額"
                 />
               </div>
+              {/* 2026-08-31 新增：「最終成本價格」——只有 canViewFinalCost
+                  （預設會計/老闆）才會渲染這個欄位，即使有 canViewCost 的
+                  店長/員工也看不到、填不到。這裡刻意不放隱藏欄位保留原值
+                  ——因為沒有 canViewFinalCost 的人，car prop 送到瀏覽器前
+                  就已經被伺服器清成 null（見 page.tsx），根本沒有真值可以
+                  「原封不動送回去」；cars-actions.ts 也只在 canViewFinalCost
+                  為真時才會把這個欄位放進 insert/update payload，其餘情況
+                  完全不會動到資料庫裡原本的值，不用擔心被表單清空。 */}
+              {canViewFinalCost && (
+                <div className="mt-3 border-t border-dashed border-neutral-200 pt-3">
+                  <Field
+                    label="最終成本價格（僅會計/老闆可見）"
+                    name="final_cost_price"
+                    type="number"
+                    defaultValue={car?.final_cost_price != null ? String(car.final_cost_price) : ""}
+                  />
+                  <p className="mt-1 text-xs text-neutral-400">
+                    🔒 真實的最終成本，只有這個角色看得到——「收購進價」是給其他人看的參考金額，兩者互相獨立，不會互相覆蓋。
+                  </p>
+                </div>
+              )}
               <p className="mt-2 text-xs text-neutral-400">
                 整備維修成本／整理美容成本改到車輛詳情頁的「維修請款與會計」分頁新增請款（選對類別），會自動加總更新，這裡不用手動填。稅金因車輛/牌照類型而異，系統不自動計算，請自行填寫實際金額。
               </p>

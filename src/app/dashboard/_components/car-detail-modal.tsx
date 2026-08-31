@@ -21,6 +21,7 @@ export function CarDetailModal({
   canReview,
   canViewCost,
   canViewCommission,
+  canViewFinalCost,
   canEditCars,
   tenantName,
   repairItems,
@@ -45,6 +46,10 @@ export function CarDetailModal({
    * 「能不能看成本結構這個區塊」，canViewCommission 是「這個區塊裡的
    * 抽成金額能不能再進一步看到」，兩者互相獨立，缺一都看不到。 */
   canViewCommission: boolean;
+  /** 2026-08-31 新增：可以檢視「最終成本價格」——比 canViewCost 更嚴格，
+   * 預設只有會計/老闆看得到，即使有 canViewCost 也不例外，見
+   * permissions.ts 對 canViewFinalCost 的說明。 */
+  canViewFinalCost: boolean;
   canEditCars: boolean;
   tenantName?: string;
   repairItems: RepairItem[];
@@ -360,6 +365,14 @@ export function CarDetailModal({
               <Money label="整理美容成本（已核准）" value={approvedDetailingCost} mask={!canViewCost} />
               {approvedOtherCost > 0 && (
                 <Money label="其他開銷（已核准）" value={approvedOtherCost} mask={!canViewCost} />
+              )}
+              {/* 2026-08-31 新增：真實最終成本，只有 canViewFinalCost（預設
+                  會計/老闆）才會顯示這一行，即使看得到上面其他成本的店長/
+                  員工也不會看到。刻意不併入上面的「車輛總成本」合計，跟
+                  業務抽成一樣避免有人用「合計 － 已知項目」反推出這個
+                  數字。 */}
+              {canViewCost && canViewFinalCost && (
+                <Money label="最終成本價格（僅會計/老闆可見）" value={car.final_cost_price} highlight />
               )}
             </div>
             {canViewCost && (
