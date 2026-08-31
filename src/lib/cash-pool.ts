@@ -84,7 +84,18 @@ export function computeCashPoolSummary(params: {
   cashOpening: number | null;
   bankOpening: number | null;
   startedAt: string | null;
-  deals: Pick<Deal, "id" | "final_price" | "deposit_amount" | "balance_amount" | "payment_method" | "status" | "created_at" | "customer_name">[];
+  deals: Pick<
+    Deal,
+    | "id"
+    | "final_price"
+    | "deposit_amount"
+    | "balance_amount"
+    | "deposit_payment_method"
+    | "balance_payment_method"
+    | "status"
+    | "created_at"
+    | "customer_name"
+  >[];
   cars: Pick<Car, "id" | "paid_amount" | "payment_method" | "created_at" | "brand" | "model_name">[];
   expenses: Pick<CompanyExpense, "id" | "amount" | "payment_method" | "expense_date" | "title">[];
   manual: Pick<Transaction, "id" | "type" | "amount" | "payment_method" | "date" | "category" | "note">[];
@@ -100,26 +111,44 @@ export function computeCashPoolSummary(params: {
 
   // 1. 成交收款：草約還沒收訂金不算；已簽約算訂金；已交車視為訂金＋尾款
   //    都已收齊（車都交出去了，實務上錢一定收完了）。
+  //
+  // 2026-08-31：訂金／尾款分開記錄各自的收款方式（deposit_payment_method／
+  // balance_payment_method）——實務上訂金常常是現金、尾款才走匯款（或
+  // 反過來），舊版把整筆合起來當一種方式算，會導致現金／銀行水池對不
+  // 起來。這裡拆成最多兩筆獨立事件：訂金一筆（已簽約/已交車都算）、
+  // 尾款一筆（只有已交車才算，因為尾款要車真的交出去才會收齊），各自
+  // 用各自的收款方式歸類進對應的池子，兩者可以是不同的池。
   for (const deal of deals) {
     if (!isOnOrAfterStart(deal.created_at)) continue;
-    if (!deal.payment_method) continue;
-    const received =
-      deal.status === "delivered"
-        ? Number(deal.deposit_amount ?? 0) + Number(deal.balance_amount ?? 0)
-        : deal.status === "signed"
-          ? Number(deal.deposit_amount ?? 0)
-          : 0;
-    if (received <= 0) continue;
-    events.push({
-      id: `deal:${deal.id}`,
-      kind: "deal_income",
-      amount: received,
-      method: deal.payment_method,
-      date: deal.created_at,
-      title: `成交收款・${deal.customer_name}`,
-      detail: deal.status === "delivered" ? "訂金＋尾款" : "訂金",
-      sourceId: deal.id,
-    });
+
+    const depositReceived = deal.status === "signed" || deal.status === "delivered";
+    const depositAmount = Number(deal.deposit_amount ?? 0);
+    if (depositReceived && depositAmount > 0 && deal.deposit_payment_method) {
+      events.push({
+        id: `deal:${deal.id}:deposit`,
+        kind: "deal_income",
+        amount: depositAmount,
+        method: deal.deposit_payment_method,
+        date: deal.created_at,
+        title: `成交收款・${deal.customer_name}`,
+        detail: "訂金",
+        sourceId: deal.id,
+      });
+    }
+
+    const balanceAmount = Number(deal.balance_amount ?? 0);
+    if (deal.status === "delivered" && balanceAmount > 0 && deal.balance_payment_method) {
+      events.push({
+        id: `deal:${deal.id}:balance`,
+        kind: "deal_income",
+        amount: balanceAmount,
+        method: deal.balance_payment_method,
+        date: deal.created_at,
+        title: `成交收款・${deal.customer_name}`,
+        detail: "尾款",
+        sourceId: deal.id,
+      });
+    }
   }
 
   // 2. 進貨付款：買車付給前車主／代結清貸款銀行的錢，是水池的流出。

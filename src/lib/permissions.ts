@@ -39,6 +39,20 @@ export interface EffectivePermissions {
   canViewAnalytics: boolean;
   /** 可以管理員工角色與權限（老闆專屬，不受個別開關影響）。 */
   canManageStaff: boolean;
+  /**
+   * 2026-08-31 新增：可以檢視車輛的「最終成本價格」——比 canViewCost 更
+   * 嚴格的獨立權限。安安反映「收購進價」有時候會刻意墊高（跟業務/店長
+   * 揭露的成本不是真實成本），需要另一個只有會計/老闆看得到的真實成本
+   * 欄位，即使某人有 canViewCost（例如預設看得到成本的店長），一樣看
+   * 不到這個欄位。
+   *
+   * 這個權限固定綁角色（accountant / tenant_admin），不像其他六個權限
+   * 開關可以在「帳號與權限管理」個別微調——這個功能存在的目的就是防止
+   * 「有成本檢視權限的人」也看到真實成本，如果又能個別開放給店長/員工，
+   * 會直接違背安安的原始需求，所以這裡不接 profiles 表的個別欄位，純粹
+   * 用角色判斷。
+   */
+  canViewFinalCost: boolean;
 }
 
 type PermissionSource = Pick<
@@ -71,6 +85,7 @@ export function getEffectivePermissions(profile: PermissionSource): EffectivePer
       canManageFinance: true,
       canViewAnalytics: true,
       canManageStaff: true,
+      canViewFinalCost: true,
     };
   }
   return {
@@ -82,6 +97,7 @@ export function getEffectivePermissions(profile: PermissionSource): EffectivePer
     canManageFinance: profile.can_manage_finance,
     canViewAnalytics: profile.can_view_analytics,
     canManageStaff: false,
+    canViewFinalCost: profile.role === "accountant",
   };
 }
 
