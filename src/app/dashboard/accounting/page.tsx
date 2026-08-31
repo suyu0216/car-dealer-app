@@ -146,7 +146,11 @@ const DEFAULT_EXPENSE_CATEGORIES: { name: string; is_protected: boolean }[] = [
 
 export default function AccountingPage() {
   const supabase = createClient();
-  const [activeTab, setActiveTab] = useState<"company" | "summary" | "payroll" | "profitShare">("company");
+  // 2026-08-31：安安要求「資金總覽」比「公司營運開銷」更重要，要排在
+  // 前面——預設分頁從 "company" 改成 "summary"，下面的分頁按鈕順序也
+  // 跟著對調（見下方 JSX），兩處要一起改，不然預設打開的分頁跟按鈕排列
+  // 順序會對不起來。
+  const [activeTab, setActiveTab] = useState<"company" | "summary" | "payroll" | "profitShare">("summary");
   const [expenses, setExpenses] = useState<CompanyExpense[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -512,18 +516,9 @@ export default function AccountingPage() {
           只有 canViewSalary（hasPayrollOnlyAccess）的員工/店長只會看到
           「薪資單」一個分頁，其餘三個按鈕整個不渲染。 */}
       <div className="mb-6 flex border-b border-neutral-200">
-        {hasFinanceAccess && (
-          <button
-            onClick={() => setActiveTab("company")}
-            className={`px-5 py-3 font-semibold text-sm transition border-b-2 ${
-              activeTab === "company"
-                ? "border-blue-600 text-blue-600"
-                : "border-transparent text-neutral-500 hover:text-neutral-700"
-            }`}
-          >
-            🏢 公司營運開銷 (水電/租金/雜項)
-          </button>
-        )}
+        {/* 2026-08-31：安安要求「資金總覽」比「公司營運開銷」更重要，
+            按鈕順序對調到最前面（預設開啟的分頁也一併改，見上面 activeTab
+            的初始值）。 */}
         {hasFinanceAccess && (
           <button
             onClick={() => setActiveTab("summary")}
@@ -534,6 +529,18 @@ export default function AccountingPage() {
             }`}
           >
             💰 資金總覽（現金／銀行水位）
+          </button>
+        )}
+        {hasFinanceAccess && (
+          <button
+            onClick={() => setActiveTab("company")}
+            className={`px-5 py-3 font-semibold text-sm transition border-b-2 ${
+              activeTab === "company"
+                ? "border-blue-600 text-blue-600"
+                : "border-transparent text-neutral-500 hover:text-neutral-700"
+            }`}
+          >
+            🏢 公司營運開銷 (水電/租金/雜項)
           </button>
         )}
         <button
