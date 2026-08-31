@@ -276,6 +276,13 @@ export interface RepairItem {
    * 顯示時要另外向伺服器要 signed URL，不能直接當 <a href> 用）。 */
   evidence_path: string | null;
   note: string | null;
+  /** 2026-08-31 新增：會計核准撥款當下選的撥款方式——cash=現金 /
+   * bank=匯款，NULL＝還沒核准，或核准當下沒選（歷史資料）。給「資金
+   * 總覽」水池分類這筆請款撥款要算進現金池還是銀行池，見 cash-pool.ts。
+   * 送出請款申請的人（業務/員工）不會、也不需要填這欄——實際撥款的是
+   * 會計，這欄是在 reviewRepairItem() 核准的當下才選填，不是建立請款
+   * 當下就有。 */
+  payment_method: CashPoolMethod | null;
   reviewed_at: string | null;
   created_at: string;
 }
@@ -338,6 +345,13 @@ export interface Deal {
   status: DealStatus;
   note: string | null;
   created_at: string;
+  /** 2026-08-31 新增：合約狀態第一次被標記成 delivered（已交車）的
+   * 時間戳記，在 deals-actions.ts 的 updateDeal() 裡設定一次、之後不會
+   * 再變動。用途：資金總覽「尾款」水池事件原本誤用 created_at（合約
+   * 建立日）當尾款實際收款日，如果合約起算點之前建立、卻是起算點之後
+   * 才交車收尾款，會被誤判成「起算點之前」而算不到——改用這欄才能反映
+   * 尾款真正收到的時間，見 cash-pool.ts。NULL＝這筆合約還沒交車過。 */
+  delivered_at: string | null;
 }
 
 /** 公司營運開銷（水電/租金/廣告等跟特定車輛無關的固定支出），見
