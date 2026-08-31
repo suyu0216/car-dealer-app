@@ -112,20 +112,30 @@ export function PayrollModule({
     }
     return keys;
   }
+  // 2026-08-31 新增：安安要看「已成交的車子當月總共」，分月看——薪水是
+  // 按月結算的，只看錢的總額不夠，還要知道這個月／每個月到底成交了幾台
+  // 車，才知道這個月的抽成是靠幾筆案子湊出來的。台數用跟抽成金額同一套
+  // 月份歸屬規則（dealMonthKey：優先看車輛結帳封存日），確保「這個月有
+  // 幾台車」跟「這個月抽成多少錢」永遠是同一批合約算出來的，不會兜不
+  // 起來。
   function totalsForMonth(monthKey: string) {
-    if (!selectedId) return 0;
+    if (!selectedId) return { total: 0, carCount: 0 };
     const salary = expenses
       .filter(
         (e) => e.category === "人事薪資" && e.employee_profile_id === selectedId && taiwanMonthKey(e.expense_date) === monthKey
       )
       .reduce((sum, e) => sum + Number(e.amount), 0);
-    const commission = deals
-      .filter((d) => d.salesperson_id === selectedId && d.status === "delivered" && dealMonthKey(d) === monthKey)
-      .reduce((sum, d) => sum + Number(d.commission_amount ?? 0), 0);
-    return salary + commission;
+    const monthDeals = deals.filter(
+      (d) => d.salesperson_id === selectedId && d.status === "delivered" && dealMonthKey(d) === monthKey
+    );
+    const commission = monthDeals.reduce((sum, d) => sum + Number(d.commission_amount ?? 0), 0);
+    return { total: salary + commission, carCount: monthDeals.length };
   }
   const trendMonths = monthKeysEndingAt(month, 6);
-  const trendTotals = trendMonths.map((mk) => ({ month: mk, total: totalsForMonth(mk) }));
+  const trendTotals = trendMonths.map((mk) => {
+    const { total, carCount } = totalsForMonth(mk);
+    return { month: mk, total, carCount };
+  });
   const trendMax = Math.max(1, ...trendTotals.map((t) => t.total));
   // 跟上個月比較的成長率——只有上個月「有領到錢」時才顯示百分比，避免
   // 上個月是 0 時算出無意義的「成長 N 萬 %」。
@@ -179,6 +189,12 @@ export function PayrollModule({
             <p className="mt-1 text-xs text-neutral-400">
               底薪／獎金 {formatCurrency(salaryTotal)} ＋ 抽成 {formatCurrency(commissionTotal)}
             </p>
+            {/* 2026-08-31 新增：薪水是按月結算，安安要看這個月抽成是靠幾台
+                成交車湊出來的，不只是看錢的總額。台數就是下面「抽成明細
+                （已交車）」表格的列數，同一份 commissionDeals 陣列。 */}
+            <p className="mt-1 inline-flex items-center gap-1 rounded-full bg-[#FBF1E4] px-2.5 py-1 text-xs font-semibold text-[#A6793D]">
+              🚗 本月已成交 {commissionDeals.length} 台
+            </p>
             {growthPct !== null && (
               <p
                 className={
@@ -197,9 +213,9 @@ export function PayrollModule({
               手動比對。 */}
           <div className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
             <h3 className="text-sm font-semibold text-neutral-800">📈 近 6 個月薪水趨勢</h3>
-            <p className="mt-0.5 text-xs text-neutral-400">底薪／獎金＋抽成，依月份加總</p>
+            <p className="mt-0.5 text-xs text-neutral-400">底薪／獎金＋抽成，依月份加總；括號內是當月已成交台數</p>
             <div className="mt-4 flex items-end gap-2 sm:gap-3">
-              {trendTotals.map(({ month: mk, total }) => {
+              {trendTotals.map(({ month: mk, total, carCount }) => {
                 const [, mNum] = mk.split("-");
                 const isCurrent = mk === month;
                 return (
@@ -211,7 +227,9 @@ export function PayrollModule({
                       className={"w-full rounded-t-md " + (isCurrent ? "bg-[#BFA074]" : "bg-[#E7DAC3]")}
                       style={{ height: `${Math.max(4, (total / trendMax) * 96)}px` }}
                     />
-                    <span className="text-[10px] text-neutral-400">{Number(mNum)}月</span>
+                    <span className="text-[10px] text-neutral-400">
+                      {Number(mNum)}月{carCount > 0 ? `（${carCount}台）` : ""}
+                    </span>
                   </div>
                 );
               })}
