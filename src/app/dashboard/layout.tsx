@@ -17,11 +17,15 @@
 // 車行看到的側邊欄都應該顯示自己車行的名稱，不是開發時測試用的那一間，
 // 這裡額外查一次 tenants.name 修正。
 //
-// 通知鈴鐺：只有 canManageStaff 的人（車行管理員，實際上會去審核維修
-// 請款、看公司開銷的人）才看得到，跟一般業務無關的東西不用讓他們也看到
-// 一個永遠不會有內容的鈴鐺。這裡先撈最近 20 筆（不分已讀/未讀，已讀的
-// 用來讓使用者往回滑還看得到最近做過的事，不是撈完就消失）交給
-// NotificationBell 顯示，未讀數字紅點由那邊自己算。
+// 通知鈴鐺：原本只有 canManageStaff（老闆）看得到——2026-08-31 起放寬成
+// canManageStaff 或 canManageFinance 也看得到（會計預設就有
+// canManageFinance），理由是：維修請款待審核／公司開銷／新增車輛沒填
+// 底價這幾種通知，實際處理的人常常是會計，不是只有老闆，原本只有老闆
+// 看得到鈴鐺，會計反而要靠老闆口頭轉達才知道有東西要處理。跟一般業務
+// 無關的東西還是不會顯示，只是把「誰算管理者」從只有老闆放寬成老闆或
+// 會計。這裡先撈最近 20 筆（不分已讀/未讀，已讀的用來讓使用者往回滑
+// 還看得到最近做過的事，不是撈完就消失）交給 NotificationBell 顯示，
+// 未讀數字紅點由那邊自己算。
 import { requireTenantUser, getTenantById } from "@/lib/supabase/dal";
 import { createClient } from "@/lib/supabase/server";
 import { getEffectivePermissions } from "@/lib/permissions";
@@ -45,13 +49,14 @@ export default async function DashboardLayout({
 
   let notifications: Notification[] = [];
   let pendingRepairCount = 0;
+  const canSeeNotifications = permissions.canManageStaff || permissions.canManageFinance;
 
   // 「估車申請」待處理筆數——跟上面通知/維修請款筆數不一樣，這個項目
-  // 所有角色都看得到（不受 canManageStaff 限制，見下面 navItems 的
+  // 所有角色都看得到（不受 canSeeNotifications 限制，見下面 navItems 的
   // tradeIns 項目跟 dashboard-shell.tsx 的 modules 清單），所以放在
-  // canManageStaff 判斷之外、一律查詢。
+  // canSeeNotifications 判斷之外、一律查詢。
   const [managerData, { count: pendingTradeInCountRaw }] = await Promise.all([
-    permissions.canManageStaff
+    canSeeNotifications
       ? Promise.all([
           supabase
             .from("notifications")
@@ -168,7 +173,7 @@ export default async function DashboardLayout({
       <SidebarNav
         items={navItems}
         tenantName={tenant?.name}
-        bell={permissions.canManageStaff ? <NotificationBell initialNotifications={notifications} /> : undefined}
+        bell={canSeeNotifications ? <NotificationBell initialNotifications={notifications} /> : undefined}
       />
       <main className="flex-1 p-4 sm:p-6">{children}</main>
     </div>

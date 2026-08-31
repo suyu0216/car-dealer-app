@@ -5,6 +5,7 @@ import { requireTenantUser } from "@/lib/supabase/dal";
 import { createClient } from "@/lib/supabase/server";
 import { uploadCarPhoto } from "@/lib/supabase/storage";
 import { getEffectivePermissions } from "@/lib/permissions";
+import { createNotification } from "@/lib/supabase/notifications";
 import { VALID_BODY_TYPES } from "@/lib/supabase/types";
 import type { CarStatus, DealStatus, PaymentMethod, TransferStatus } from "@/lib/supabase/types";
 
@@ -396,6 +397,25 @@ export async function createCar(
 
   if (error || !inserted) {
     return { error: `新增車輛失敗：${error?.message ?? "未知錯誤"}` };
+  }
+
+  // 2026-08-31 新增：安安要求新增車輛入庫時「底價」一定要填，但底價
+  // 屬於成本類敏感資訊，員工（負責新增車輛入庫的人）預設看不到、也
+  // 填不到這個欄位（見 canViewCost），沒辦法強制他們填。改成新增當下
+  // 如果沒有底價，就發一則通知鈴鐺提醒會計/老闆回頭補填——link 帶上
+  // highlight=車輛 id，點通知會直接跳到「車輛庫存管理」分頁並自動開啟
+  // 這輛車的編輯表單（見 cars-manager.tsx）。dashboard/layout.tsx 已經
+  // 把鈴鐺放寬成 canManageStaff 或 canManageFinance 都看得到，會計才收
+  // 得到這則提醒。
+  if (values.floor_price == null) {
+    await createNotification({
+      tenantId: profile.tenant_id!,
+      type: "car_floor_price_missing",
+      title: "新車入庫，尚待填寫底價",
+      message: `${profile.name ?? "有人"} 新增了「${values.brand ? `${values.brand} ` : ""}${values.model_name}」，還沒有底價，請回頭補填。`,
+      actorName: profile.name,
+      link: `?module=inventory&highlight=${inserted.id}`,
+    });
   }
 
   // 車輛本身已經寫入成功，接下來的照片上傳是「錦上添花」的第二步驟：
