@@ -367,7 +367,12 @@ export interface CompanyExpense {
 export type NotificationType =
   | "repair_item_pending"
   | "company_expense_created"
-  | "trade_in_request_created";
+  | "trade_in_request_created"
+  // 2026-08-31 新增：新增車輛入庫時沒有填「底價」——底價屬於成本類敏感
+  // 資訊，員工（負責新增車輛入庫的人）預設看不到、也填不到這個欄位，
+  // 所以改成入庫當下自動發這則通知，提醒會計/老闆回頭補填，見
+  // cars-actions.ts 的 createCar()。
+  | "car_floor_price_missing";
 
 export interface Notification {
   id: string;
