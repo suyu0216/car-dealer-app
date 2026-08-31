@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useEffect, useState, useTransition } from "react";
-import type { Car, RepairItem, RepairItemCategory, RepairItemStatus } from "@/lib/supabase/types";
+import type { CashPoolMethod, Car, RepairItem, RepairItemCategory, RepairItemStatus } from "@/lib/supabase/types";
 import { formatCurrency, formatDate } from "@/lib/format";
 import {
   createRepairItem,
@@ -10,6 +10,7 @@ import {
 } from "../repair-items-actions";
 import { REPAIR_ITEM_CATEGORIES } from "@/lib/repair-item-constants";
 import { useUnsavedChangesGuard } from "./use-unsaved-changes-guard";
+import { CASH_POOL_METHOD_OPTIONS } from "@/lib/cash-pool";
 
 export const REPAIR_STATUS_LABEL: Record<RepairItemStatus, string> = {
   pending: "待會計審核",
@@ -494,10 +495,16 @@ export function RepairItemRow({
 }) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  // 2026-08-31 新增：核准撥款前要選現金還是銀行，「資金總覽」水池才知道
+  // 這筆錢要從哪一池扣——這是會計實際付款當下才知道的事，跟建立請款
+  // 申請時完全無關，所以只在這個核准按鈕旁邊多一個下拉選單，不動
+  // createRepairItem() 那邊的表單。退回不用選，不會有真的付款。
+  const [paymentMethod, setPaymentMethod] = useState("");
 
   function decide(decision: "approved" | "rejected") {
     startTransition(async () => {
-      const result = await reviewRepairItem(item.id, decision);
+      const method = decision === "approved" ? ((paymentMethod || null) as CashPoolMethod | null) : null;
+      const result = await reviewRepairItem(item.id, decision, method);
       setError(result?.error ?? null);
     });
   }
@@ -557,8 +564,23 @@ export function RepairItemRow({
       </div>
 
       {canReview && item.status === "pending" && (
-        <div className="mt-2 flex justify-end gap-2 border-t border-neutral-100 pt-2">
+        <div className="mt-2 flex flex-wrap items-center justify-end gap-2 border-t border-neutral-100 pt-2">
           {error && <p className="mr-auto text-xs text-red-600">{error}</p>}
+          {/* 2026-08-31 新增：核准撥款前先選現金還是銀行，「資金總覽」
+              水池才知道這筆錢要從哪一池扣，見 reviewRepairItem() 的說明。
+              退回不用選，這裡的值只有按下「核准撥款」才會被送出。 */}
+          <select
+            value={paymentMethod}
+            onChange={(e) => setPaymentMethod(e.target.value)}
+            className="rounded-lg border border-neutral-200 bg-white px-2 py-1 text-xs text-neutral-700 outline-none focus:border-[#BFA074]"
+          >
+            <option value="">撥款方式…</option>
+            {CASH_POOL_METHOD_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
           <button
             type="button"
             disabled={pending}
@@ -569,7 +591,8 @@ export function RepairItemRow({
           </button>
           <button
             type="button"
-            disabled={pending}
+            disabled={pending || !paymentMethod}
+            title={!paymentMethod ? "請先選擇撥款方式" : undefined}
             onClick={() => decide("approved")}
             className="rounded-lg bg-[#5F7563] px-2.5 py-1 text-xs font-medium text-white transition hover:bg-[#516357] disabled:opacity-50"
           >

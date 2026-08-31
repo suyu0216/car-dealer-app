@@ -13,7 +13,7 @@ import {
 } from "../cash-pool-actions";
 import { CASH_POOL_METHOD_OPTIONS, MANUAL_TRANSACTION_CATEGORIES, computeCashPoolSummary } from "@/lib/cash-pool";
 import { formatCurrency, formatDate, currentTaiwanDateKey } from "@/lib/format";
-import type { Car, CompanyExpense, Deal, Tenant, Transaction, TransactionType } from "@/lib/supabase/types";
+import type { Car, CompanyExpense, Deal, RepairItem, Tenant, Transaction, TransactionType } from "@/lib/supabase/types";
 
 type TenantPoolFields = Pick<Tenant, "cash_opening_balance" | "bank_opening_balance" | "cash_pool_started_at">;
 type DealSlice = Pick<
@@ -26,9 +26,14 @@ type DealSlice = Pick<
   | "balance_payment_method"
   | "status"
   | "created_at"
+  | "delivered_at"
   | "customer_name"
 >;
-type CarSlice = Pick<Car, "id" | "paid_amount" | "payment_method" | "created_at" | "brand" | "model_name">;
+type CarSlice = Pick<Car, "id" | "purchase_price" | "payment_method" | "created_at" | "brand" | "model_name">;
+type RepairItemSlice = Pick<
+  RepairItem,
+  "id" | "car_id" | "item_name" | "category" | "amount" | "status" | "payment_method" | "reviewed_at" | "created_at"
+>;
 
 const emptyState: CashPoolFormState = {};
 const INPUT_CLASS =
@@ -42,6 +47,7 @@ export function CashPoolModule({
   cars,
   expenses,
   manualTransactions,
+  repairItems,
   onDataChanged,
 }: {
   tenant: TenantPoolFields | null;
@@ -51,6 +57,9 @@ export function CashPoolModule({
   cars: CarSlice[];
   expenses: Pick<CompanyExpense, "id" | "amount" | "payment_method" | "expense_date" | "title">[];
   manualTransactions: Pick<Transaction, "id" | "type" | "amount" | "payment_method" | "date" | "category" | "note">[];
+  /** 2026-08-31 新增：已核准的維修/整備請款撥款——「資金總覽」水池深度
+   * 檢查後補上的第五個資料來源，見 cash-pool.ts 開頭的說明。 */
+  repairItems: RepairItemSlice[];
   onDataChanged: () => void;
 }) {
   const [showSetup, setShowSetup] = useState(false);
@@ -87,6 +96,7 @@ export function CashPoolModule({
     cars,
     expenses,
     manual: manualTransactions,
+    repairItems,
   });
 
   const scaleMax = Math.max(summary.cash.balance, summary.bank.balance, 1) * 1.15;
@@ -97,7 +107,7 @@ export function CashPoolModule({
         <div>
           <h2 className="text-base font-semibold text-neutral-800">💰 資金總覽</h2>
           <p className="mt-0.5 text-xs text-neutral-400">
-            自 {formatDate(summary.startedAt)} 起算，累計成交收款／進貨付款／公司開銷／手動紀錄
+            自 {formatDate(summary.startedAt)} 起算，累計成交收款／進貨付款／請款撥款／公司開銷／手動紀錄
           </p>
         </div>
         {isTenantAdmin && (

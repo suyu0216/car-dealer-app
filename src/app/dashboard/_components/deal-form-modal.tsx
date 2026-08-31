@@ -135,19 +135,45 @@ export function DealFormModal({
   // 應該、也不會再各算各的一套。已結帳（closed_at 有值，理論上不太會
   // 發生在「還沒交車」的合約選的車上）就直接用封存快照，避免顯示跟真正
   // 入帳的數字對不起來。
-  const vehicleTotalCost = useMemo(() => {
+  //
+  // 2026-08-31 新增：安安反映這裡原本只顯示算好的「稅前淨利」一個總數，
+  // 完全看不出來是怎麼加減出來的——改成把收購進價／過戶費規費／稅金／
+  // 已核准整備維修這幾個構成項目都列出來（costBreakdown），跟下面
+  // 「稅前淨利＝成交價－總成本」放在同一個試算區塊裡，才看得懂總成本
+  // 是怎麼來的。已核准整備維修費依類別（維修/美容/其他）分開列，跟
+  // car-detail-modal.tsx「成本結構」區塊同一套分類方式，不是只給一個
+  // 籠統的「整備費」數字。已結帳的車輛，整備費改讀封存快照
+  // closed_prep_cost（不分類別，結帳當下已經是一個總數，沒辦法回頭拆
+  // 三類），收購進價/過戶費/稅金這三項車輛本身欄位不受結帳影響，一樣
+  // 直接讀車輛當下的值即可。
+  const costBreakdown = useMemo(() => {
     if (!selectedCar) return null;
-    if (selectedCar.closed_at != null) return Number(selectedCar.closed_total_cost ?? 0);
-    const approvedPrepCost = repairItems
-      .filter((r) => r.car_id === selectedCar.id && r.status === "approved")
-      .reduce((sum, r) => sum + Number(r.amount), 0);
-    return (
-      Number(selectedCar.purchase_price) +
-      approvedPrepCost +
-      Number(selectedCar.transfer_fee ?? 0) +
-      Number(selectedCar.tax_amount ?? 0)
-    );
+    const purchasePrice = Number(selectedCar.purchase_price);
+    const transferFee = Number(selectedCar.transfer_fee ?? 0);
+    const taxAmount = Number(selectedCar.tax_amount ?? 0);
+    const isClosed = selectedCar.closed_at != null;
+    const approvedItems = repairItems.filter((r) => r.car_id === selectedCar.id && r.status === "approved");
+    const prepByCategory = {
+      維修: approvedItems.filter((r) => r.category === "維修").reduce((sum, r) => sum + Number(r.amount), 0),
+      美容: approvedItems.filter((r) => r.category === "美容").reduce((sum, r) => sum + Number(r.amount), 0),
+      其他: approvedItems.filter((r) => r.category === "其他").reduce((sum, r) => sum + Number(r.amount), 0),
+    };
+    const prepCostFromItems = prepByCategory.維修 + prepByCategory.美容 + prepByCategory.其他;
+    const prepCost = isClosed ? Number(selectedCar.closed_prep_cost ?? 0) : prepCostFromItems;
+    return {
+      purchasePrice,
+      transferFee,
+      taxAmount,
+      prepCost,
+      // 已結帳的車輛，封存快照是單一總數，沒辦法回頭拆成三個類別，這裡
+      // 保留 isClosed 讓畫面決定要不要顯示分類明細（未結帳才顯示分類）。
+      prepByCategory,
+      isClosed,
+      total: purchasePrice + transferFee + taxAmount + prepCost,
+    };
   }, [selectedCar, repairItems]);
+
+  const vehicleTotalCost = costBreakdown?.total ?? null;
 
   const revenue = finalPrice.trim() === "" ? null : Number(finalPrice);
   const preTaxProfit =
@@ -497,9 +523,40 @@ export function DealFormModal({
                   <p className="text-xs text-neutral-400">請先選好車輛、填好成交價，這裡會自動跳出試算。</p>
                 ) : (
                   <>
+                    {/* 2026-08-31 新增：成本細項——安安反映原本只看得到算好的
+                        「稅前淨利」總數，看不出來是怎麼加減出來的，這裡把
+                        構成總成本的每一項都列出來，跟 car-detail-modal.tsx
+                        「成本結構」用同一套數字來源（未結帳讀即時加總，已
+                        結帳讀封存快照）。 */}
+                    {costBreakdown && (
+                      <div className="space-y-1 rounded-lg bg-white p-2.5 text-xs ring-1 ring-inset ring-neutral-200">
+                        <p className="mb-1 font-medium text-neutral-500">成本細項（{selectedCar.brand ? `${selectedCar.brand} ` : ""}{selectedCar.model_name}）</p>
+                        <CostRow label="收購進價" value={costBreakdown.purchasePrice} />
+                        <CostRow label="過戶費/規費" value={costBreakdown.transferFee} />
+                        <CostRow label="稅金/發票稅金" value={costBreakdown.taxAmount} />
+                        {costBreakdown.isClosed ? (
+                          <CostRow label="整備維修/美容/其他（已結帳封存）" value={costBreakdown.prepCost} />
+                        ) : (
+                          <>
+                            <CostRow label="整備維修費（已核准）" value={costBreakdown.prepByCategory.維修} indent />
+                            <CostRow label="整理美容費（已核准）" value={costBreakdown.prepByCategory.美容} indent />
+                            <CostRow label="其他請款（已核准）" value={costBreakdown.prepByCategory.其他} indent />
+                          </>
+                        )}
+                        <div className="flex items-center justify-between border-t border-neutral-100 pt-1 font-semibold text-neutral-700">
+                          <span>車輛總成本</span>
+                          <span className="tabular-nums">{formatCurrency(costBreakdown.total)}</span>
+                        </div>
+                        <div className="flex items-center justify-between text-neutral-500">
+                          <span>成交價</span>
+                          <span className="tabular-nums">{revenue != null ? formatCurrency(revenue) : "—"}</span>
+                        </div>
+                      </div>
+                    )}
+
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-neutral-500">
-                        稅前淨利（成交價 − 收購價/整備費/規費/稅金的總成本）
+                        稅前淨利（成交價 − 上面的車輛總成本）
                       </span>
                       <span
                         className={
@@ -653,6 +710,17 @@ function Field({
         step={type === "number" ? "any" : undefined}
         className={INPUT_CLASS}
       />
+    </div>
+  );
+}
+
+/** 「成本細項」清單裡的一列——單純顯示一個標籤＋金額，indent 給分類
+ * 明細（維修/美容/其他）用一點縮排跟稍淡的顏色，跟上面的大項區分開來。 */
+function CostRow({ label, value, indent = false }: { label: string; value: number; indent?: boolean }) {
+  return (
+    <div className={"flex items-center justify-between " + (indent ? "pl-3 text-neutral-400" : "text-neutral-600")}>
+      <span>{label}</span>
+      <span className="tabular-nums">{formatCurrency(value)}</span>
     </div>
   );
 }

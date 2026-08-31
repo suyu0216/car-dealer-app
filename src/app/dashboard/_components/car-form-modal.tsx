@@ -340,7 +340,7 @@ export function CarFormModal({
               編輯，避免使用者以為填這裡有用。 */}
           {canViewCost ? (
             <FormSection title="成本（新台幣 NT$）">
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 <Field
                   label="收購進價"
                   name="purchase_price"
@@ -348,6 +348,34 @@ export function CarFormModal({
                   defaultValue={car?.purchase_price != null ? String(car.purchase_price) : "0"}
                   required
                 />
+                {/* 2026-08-31 新增：付款方式從下面「進貨付款追蹤」折疊區塊
+                    移到這裡、緊貼著收購進價，並改成必填——安安反映「進貨
+                    的錢沒有真的從水池扣掉」，查下來是因為原本水池讀的是
+                    「已付金額」這個獨立、預設收起來、很容易忘記填的欄位，
+                    跟這裡的收購進價各填各的，沒人記得同時去補「已付金額」，
+                    水池就看不到這筆流出。現在改成「資金總覽」直接用收購
+                    進價當作進貨付款金額（見 cash-pool.ts），這裡把付款方式
+                    移上來變必填，兩者綁在同一個地方一起填，不會再各自
+                    分開、漏掉其中一個。「已付金額」欄位本身移除，改成
+                    隱藏欄位保留舊資料（見下面 Accordion 之後的說明）。 */}
+                <div>
+                  <label className="block text-sm font-medium text-neutral-700">付款方式 *</label>
+                  <select
+                    name="payment_method"
+                    defaultValue={car?.payment_method ?? ""}
+                    required
+                    className={INPUT_CLASS + " mt-1"}
+                  >
+                    <option value="" disabled>
+                      請選擇
+                    </option>
+                    {PAYMENT_METHOD_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
                 <Field label="過戶費/規費" name="transfer_fee" type="number" defaultValue={car?.transfer_fee != null ? String(car.transfer_fee) : ""} />
                 <Field
                   label="稅金/發票稅金"
@@ -357,6 +385,9 @@ export function CarFormModal({
                   placeholder="每台車稅率不同，請自行填實際金額"
                 />
               </div>
+              <p className="mt-2 text-xs text-neutral-400">
+                「付款方式」決定這筆收購進價要從「資金總覽」的現金池還是銀行池扣款，請務必據實選擇，才能讓水池餘額跟實際狀況對得上。
+              </p>
               {/* 2026-08-31 新增：「最終成本價格」——只有 canViewFinalCost
                   （預設會計/老闆）才會渲染這個欄位，即使有 canViewCost 的
                   店長/員工也看不到、填不到。這裡刻意不放隱藏欄位保留原值
@@ -388,6 +419,11 @@ export function CarFormModal({
             <>
               <p className="text-xs text-neutral-400">🔒 成本屬於敏感財務資訊，沒有檢視權限</p>
               <input type="hidden" name="purchase_price" value={car?.purchase_price ?? 0} />
+              {/* 付款方式現在跟收購進價放在同一個 canViewCost 區塊裡（見
+                  上面的說明），沒有 canViewCost 的人一樣要用隱藏欄位把
+                  原值原封不動送回去，不會因為編輯其他欄位就把付款方式
+                  清空，進而讓水池少算一筆進貨支出。 */}
+              <input type="hidden" name="payment_method" value={car?.payment_method ?? ""} />
               <input type="hidden" name="transfer_fee" value={car?.transfer_fee ?? ""} />
               <input type="hidden" name="tax_amount" value={car?.tax_amount ?? ""} />
               <input type="hidden" name="detailing_cost" value={car?.detailing_cost ?? ""} />
@@ -395,35 +431,19 @@ export function CarFormModal({
             </>
           )}
 
-          {/* 進貨付款追蹤：跟成本一樣算敏感財務資訊，同一套 canViewCost
-              權限控管，理由跟做法都跟上面「成本與底價」區塊一致。 */}
+          {/* 採購業務與備註：跟成本一樣算敏感財務資訊，同一套 canViewCost
+              權限控管。
+              2026-08-31 調整：這個折疊區塊原本還有「已付金額」「付款
+              方式」兩個欄位——「付款方式」已經移到上面「成本」區塊跟
+              收購進價放一起、變成必填（見上面的說明）；「已付金額」
+              整個移除不再讓人填，因為安安反映的水池對不起來問題，根源
+              就是這個獨立、容易忘記填的欄位跟真正拿去算成本的收購進價
+              各填各的——現在水池直接用收購進價計算，這個欄位留著只會
+              製造混淆，改成隱藏欄位保留舊資料就好，不再開放編輯。 */}
           {canViewCost ? (
-            <Accordion
-              title="進貨付款追蹤"
-              defaultOpen={!!car?.paid_amount || !!car?.payment_method || !!car?.purchased_by}
-            >
+            <Accordion title="採購業務與備註" defaultOpen={!!car?.purchased_by || !!car?.payment_note}>
+              <input type="hidden" name="paid_amount" value={car?.paid_amount ?? ""} />
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                <Field
-                  label="已付金額"
-                  name="paid_amount"
-                  type="number"
-                  defaultValue={car?.paid_amount != null ? String(car.paid_amount) : ""}
-                />
-                <div>
-                  <label className="block text-sm font-medium text-neutral-700">付款方式</label>
-                  <select
-                    name="payment_method"
-                    defaultValue={car?.payment_method ?? ""}
-                    className={INPUT_CLASS + " mt-1"}
-                  >
-                    <option value="">未指定</option>
-                    {PAYMENT_METHOD_OPTIONS.map((opt) => (
-                      <option key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
                 <div>
                   <label className="block text-sm font-medium text-neutral-700">採購業務</label>
                   <select
@@ -452,8 +472,10 @@ export function CarFormModal({
             </Accordion>
           ) : (
             <>
+              {/* payment_method 的隱藏欄位在上面「成本」區塊的 !canViewCost
+                  分支已經有一份，這裡不用重複放，避免同一個 <form> 裡出現
+                  兩個同名欄位。 */}
               <input type="hidden" name="paid_amount" value={car?.paid_amount ?? ""} />
-              <input type="hidden" name="payment_method" value={car?.payment_method ?? ""} />
               <input type="hidden" name="payment_note" value={car?.payment_note ?? ""} />
               <input type="hidden" name="purchased_by" value={car?.purchased_by ?? ""} />
             </>

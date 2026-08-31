@@ -118,19 +118,41 @@ export function PayrollModule({
   // 月份歸屬規則（dealMonthKey：優先看車輛結帳封存日），確保「這個月有
   // 幾台車」跟「這個月抽成多少錢」永遠是同一批合約算出來的，不會兜不
   // 起來。
-  function totalsForMonth(monthKey: string) {
-    if (!selectedId) return { total: 0, carCount: 0 };
+  //
+  // 2026-08-31 再次調整：拆成不吃 selectedId、直接吃任一 staffId 的純
+  // 函式（computeStaffMonth），下面「全部員工薪資總覽」表格要一次算出
+  // 每個人的月結果，不能只算選定的那一位；原本的 totalsForMonth（薪水
+  // 趨勢長條圖用）跟這裡改成共用同一套算法，避免兩邊公式各寫一次、之後
+  // 改規則忘記同步。
+  function computeStaffMonth(staffId: string, monthKey: string) {
     const salary = expenses
       .filter(
-        (e) => e.category === "人事薪資" && e.employee_profile_id === selectedId && taiwanMonthKey(e.expense_date) === monthKey
+        (e) => e.category === "人事薪資" && e.employee_profile_id === staffId && taiwanMonthKey(e.expense_date) === monthKey
       )
       .reduce((sum, e) => sum + Number(e.amount), 0);
     const monthDeals = deals.filter(
-      (d) => d.salesperson_id === selectedId && d.status === "delivered" && dealMonthKey(d) === monthKey
+      (d) => d.salesperson_id === staffId && d.status === "delivered" && dealMonthKey(d) === monthKey
     );
     const commission = monthDeals.reduce((sum, d) => sum + Number(d.commission_amount ?? 0), 0);
-    return { total: salary + commission, carCount: monthDeals.length };
+    return { salary, commission, total: salary + commission, carCount: monthDeals.length };
   }
+  function totalsForMonth(monthKey: string) {
+    if (!selectedId) return { total: 0, carCount: 0 };
+    return computeStaffMonth(selectedId, monthKey);
+  }
+  // 2026-08-31 新增：「全部員工薪資總覽」——安安反映會計/老闆應該打開
+  // 「薪資單」分頁就直接看到所有員工這個月的薪資，不用一個一個從下拉
+  // 選單挑出來看。只有 canManageStaff（這裡其實是 canManageStaff 或
+  // canViewAllSalary，見 accounting/page.tsx 怎麼傳這個 prop）才看得到
+  // 這張總覽表；一般業務/員工只能看自己的，不需要、也不該看到別人的
+  // 總覽。表格依應付總額由高到低排序，點一列會帶入 selectedId，下面自動
+  // 展開那個人完整的底薪/抽成明細（沿用原本就有的單人明細畫面，不用
+  // 重複做一份）。
+  const allStaffSummary = canManageStaff
+    ? staffOptions
+        .map((s) => ({ id: s.id, name: s.name ?? "未命名", ...computeStaffMonth(s.id, month) }))
+        .sort((a, b) => b.total - a.total)
+    : [];
   const trendMonths = monthKeysEndingAt(month, 6);
   const trendTotals = trendMonths.map((mk) => {
     const { total, carCount } = totalsForMonth(mk);
@@ -175,10 +197,60 @@ export function PayrollModule({
         </div>
       </div>
 
-      {!selectedId ? (
-        <div className="rounded-2xl border border-dashed border-neutral-200 bg-white px-4 py-12 text-center text-sm text-neutral-400">
-          {canManageStaff ? "請先選擇要查看的員工" : "找不到您的員工資料"}
+      {/* 2026-08-31 新增：全部員工薪資總覽，只有 canManageStaff 看得到。
+          放在上面單人下拉選單/明細的前面——會計/老闆打開這個分頁不用
+          先選人，直接看到這個月每個人領多少，點一列才需要下拉細節。 */}
+      {canManageStaff && (
+        <div className="overflow-x-auto rounded-2xl border border-neutral-200 bg-white shadow-sm">
+          <div className="flex items-center justify-between border-b border-neutral-100 px-4 py-2.5">
+            <h3 className="text-sm font-semibold text-neutral-700">👥 全部員工薪資總覽・{month}</h3>
+            <p className="text-xs text-neutral-400">點一列可以展開該員工完整明細</p>
+          </div>
+          <table className="w-full text-left text-sm">
+            <thead>
+              <tr className="border-b border-neutral-100 text-xs text-neutral-400">
+                <th className="px-4 py-2 font-medium">員工</th>
+                <th className="px-4 py-2 text-right font-medium">底薪／獎金</th>
+                <th className="px-4 py-2 text-right font-medium">抽成</th>
+                <th className="px-4 py-2 text-right font-medium">本月成交</th>
+                <th className="px-4 py-2 text-right font-medium">應付總額</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-neutral-100">
+              {allStaffSummary.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="px-4 py-6 text-center text-neutral-400">
+                    目前車行還沒有員工資料
+                  </td>
+                </tr>
+              )}
+              {allStaffSummary.map((s) => (
+                <tr
+                  key={s.id}
+                  onClick={() => setSelectedId(s.id)}
+                  className={
+                    "cursor-pointer transition hover:bg-neutral-50 " +
+                    (s.id === selectedId ? "bg-[#FBF1E4]/60" : "")
+                  }
+                >
+                  <td className="px-4 py-2 text-neutral-800">{s.name}</td>
+                  <td className="px-4 py-2 text-right text-neutral-600">{formatCurrency(s.salary)}</td>
+                  <td className="px-4 py-2 text-right text-neutral-600">{formatCurrency(s.commission)}</td>
+                  <td className="px-4 py-2 text-right text-neutral-500">{s.carCount} 台</td>
+                  <td className="px-4 py-2 text-right font-semibold text-[#A6793D]">{formatCurrency(s.total)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
+      )}
+
+      {!selectedId ? (
+        canManageStaff ? null : (
+          <div className="rounded-2xl border border-dashed border-neutral-200 bg-white px-4 py-12 text-center text-sm text-neutral-400">
+            找不到您的員工資料
+          </div>
+        )
       ) : (
         <>
           <div className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
