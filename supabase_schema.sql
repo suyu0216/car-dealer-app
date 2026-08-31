@@ -1204,6 +1204,72 @@ create trigger on_auth_user_created
   for each row execute function public.handle_new_user();
 
 -- =============================================================================
+-- company_expense_categories（公司開銷費用類別，每個車行自己可新增/刪除）
+-- =============================================================================
+-- 2026-08-31：公司開銷費用類別原本是寫死在 src/lib/company-expense-
+-- constants.ts 裡的固定 7 個選項，改成每個車行自己的一份清單，車行可以
+-- 自己新增/刪除。注意：company_expenses 這張表本身（用來記每一筆公司
+-- 開銷）目前是這次 migration 之前就已經存在於正式環境的表，還沒被補進
+-- 這份 schema.sql 檔案裡（既有的技術債，不是這次造成的），這裡只補上
+-- 這次新增的 company_expense_categories。
+--
+-- is_protected：「人事薪資」這個類別名稱被薪資單（payroll-module.tsx）
+-- 跟淨利／分潤試算（profit-share-module.tsx）用字串完全比對來抓「這筆是
+-- 不是底薪/獎金」，不能被使用者刪掉或改名，否則那兩個功能的計算會直接
+-- 漏算，所以種子資料裡只有這一列標記 is_protected = true。
+--
+-- 這張表跟 company_expenses.category（純文字欄位，不是外鍵）沒有強制
+-- 關聯——刪除一個類別不會影響、也不會刪除既有已經用過這個類別名稱的
+-- 開銷紀錄。
+create table if not exists public.company_expense_categories (
+  id           uuid primary key default gen_random_uuid(),
+  tenant_id    uuid not null references public.tenants (id) on delete cascade,
+  name         text not null,
+  is_protected boolean not null default false,
+  sort_order   integer not null default 0,
+  created_at   timestamptz not null default now(),
+  unique (tenant_id, name)
+);
+
+comment on table public.company_expense_categories is '每個車行自訂的公司開銷費用類別清單；is_protected=true 的類別（目前只有「人事薪資」）不能被使用者刪除，因為薪資單/淨利分潤試算靠這個名稱字串比對計算。';
+
+create index if not exists company_expense_categories_tenant_id_idx on public.company_expense_categories (tenant_id);
+
+alter table public.company_expense_categories enable row level security;
+
+drop policy if exists "company_expense_categories_super_admin_all" on public.company_expense_categories;
+create policy "company_expense_categories_super_admin_all"
+  on public.company_expense_categories for all
+  using (public.is_super_admin())
+  with check (public.is_super_admin());
+
+drop policy if exists "company_expense_categories_tenant_scoped" on public.company_expense_categories;
+create policy "company_expense_categories_tenant_scoped"
+  on public.company_expense_categories for all
+  using (tenant_id = public.current_tenant_id())
+  with check (tenant_id = public.current_tenant_id());
+
+grant select, insert, update, delete on public.company_expense_categories to authenticated;
+
+-- 既有車行直接種好種子資料，不用等前端第一次載入才補（accounting/page.tsx
+-- 的 fetchCategories() 也有同一套「清單是空的就自動種預設值」的邏輯，
+-- 兩邊互為備援，不管這份 schema.sql 是不是被重新整份執行過，車行都一定
+-- 看得到預設類別可以選）。
+insert into public.company_expense_categories (tenant_id, name, is_protected, sort_order)
+select t.id, v.name, v.is_protected, v.sort_order
+from public.tenants t
+cross join (values
+  ('水電費', false, 0),
+  ('網路通訊', false, 1),
+  ('場地租金', false, 2),
+  ('廣告行銷', false, 3),
+  ('人事薪資', true, 4),
+  ('行政雜項', false, 5),
+  ('專業服務', false, 6)
+) as v(name, is_protected, sort_order)
+on conflict (tenant_id, name) do nothing;
+
+-- =============================================================================
 -- 手動建立第一位 super_admin（範例）
 -- =============================================================================
 -- 車行老闆（tenant_admin）跟自己的車行（tenants）現在會在 /login 註冊時
