@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { requireTenantUser } from "@/lib/supabase/dal";
 import { createClient } from "@/lib/supabase/server";
-import { uploadCarPhoto } from "@/lib/supabase/storage";
+import { uploadCarPhotos } from "@/lib/supabase/storage";
 import { getEffectivePermissions } from "@/lib/permissions";
 import { createNotification } from "@/lib/supabase/notifications";
 import { VALID_BODY_TYPES } from "@/lib/supabase/types";
@@ -422,21 +422,41 @@ export async function createCar(
   // 就算上傳失敗（或途中丟出未預期例外），也絕對不能讓這次新增整體失敗、
   // 卡住表單或擋掉下面的 revalidatePath——只在伺服器端記一筆 log 方便排查，
   // 使用者那邊照樣視為新增成功，Modal 正常關閉，列表也會立刻看到新車。
+  // 2026-08-31：安安要求「車輛照片」能一次選多張上傳——表單的 file input
+  // 從 name="photo" 改成 name="photos"（multiple），這裡改用
+  // formData.getAll() 一次拿全部檔案。第一張當主圖（cars.image_url，
+  // 全站目前絕大多數畫面都只讀這一欄），全部（含第一張）都寫進
+  // car_photos 相簿表——不能只把「第一張以外」的寫進相簿：前台展間的
+  // photosFor()（見 showroom-cars-section.tsx）只要 car_photos 有資料
+  // 就完全取代 image_url 當唯一來源，不是取聯集，漏寫主圖進去的話主圖
+  // 反而會從前台相簿裡消失。
   let photoWarning: string | undefined;
-  const photo = formData.get("photo");
-  if (photo instanceof File && photo.size > 0) {
+  const photoFiles = formData.getAll("photos").filter((f): f is File => f instanceof File && f.size > 0);
+  if (photoFiles.length > 0) {
     try {
-      const { url, error: uploadError } = await uploadCarPhoto(
-        supabase,
-        profile.tenant_id!,
-        inserted.id,
-        photo
+      const results = await uploadCarPhotos(supabase, profile.tenant_id!, inserted.id, photoFiles);
+      const uploaded = results.filter(
+        (r): r is { url: string; error: null; fileName: string } => r.url != null
       );
-      if (uploadError) {
-        console.error(`[createCar] 照片上傳失敗（車輛 ${inserted.id} 已成功建立）：${uploadError}`);
-        photoWarning = `車輛已成功新增，但照片上傳失敗（${uploadError}），請稍後編輯車輛重新上傳照片。`;
-      } else if (url) {
-        await supabase.from("cars").update({ image_url: url }).eq("id", inserted.id);
+      const failed = results.filter((r) => r.url == null);
+      if (uploaded.length > 0) {
+        await supabase.from("cars").update({ image_url: uploaded[0].url }).eq("id", inserted.id);
+        await supabase.from("car_photos").insert(
+          uploaded.map((u, i) => ({
+            tenant_id: profile.tenant_id!,
+            car_id: inserted.id,
+            url: u.url,
+            sort_order: i,
+          }))
+        );
+      }
+      if (failed.length > 0) {
+        console.error(
+          `[createCar] ${failed.length} 張照片上傳失敗（車輛 ${inserted.id} 已成功建立）：${failed.map((f) => f.fileName).join("、")}`
+        );
+        photoWarning = `車輛已成功新增，但有 ${failed.length} 張照片上傳失敗（${failed
+          .map((f) => f.fileName)
+          .join("、")}），請稍後編輯車輛重新上傳。`;
       }
     } catch (e) {
       const message = e instanceof Error ? e.message : "未知錯誤";
@@ -514,8 +534,13 @@ export async function updateCar(
   // 跟 createCar 一樣：照片上傳失敗（或丟出未預期例外）絕對不能擋掉其他
   // 欄位的更新——使用者可能只是想改個售價或狀態，不該因為照片上傳問題
   // 整筆存檔都失敗，只記 log、image_url 維持原樣即可。
+  // 2026-08-31：跟 createCar 一樣改成一次可以選多張（見上面的說明）。
+  // 編輯既有車輛時，新上傳的照片要接在既有 car_photos 相簿「後面」，不
+  // 能整批固定從 sort_order 0 開始——不然會蓋掉之前已經上傳過的相簿照片
+  // 排序（多筆 sort_order 重複也不影響顯示對錯，只是排序會亂掉，這裡還
+  // 是先查一次目前最大值，維持相簿的排序穩定）。
   let photoWarning: string | undefined;
-  const photo = formData.get("photo");
+  const photoFiles = formData.getAll("photos").filter((f): f is File => f instanceof File && f.size > 0);
   const updatePayload: typeof restValues &
     NomineeFields &
     ClosingFields &
@@ -525,19 +550,38 @@ export async function updateCar(
     ...closingFields,
     ...finalCostField,
   };
-  if (photo instanceof File && photo.size > 0) {
+  if (photoFiles.length > 0) {
     try {
-      const { url, error: uploadError } = await uploadCarPhoto(
-        supabase,
-        profile.tenant_id!,
-        carId,
-        photo
+      const results = await uploadCarPhotos(supabase, profile.tenant_id!, carId, photoFiles);
+      const uploaded = results.filter(
+        (r): r is { url: string; error: null; fileName: string } => r.url != null
       );
-      if (uploadError) {
-        console.error(`[updateCar] 照片上傳失敗（車輛 ${carId} 其餘欄位仍會更新）：${uploadError}`);
-        photoWarning = `車輛資料已成功更新，但照片上傳失敗（${uploadError}），照片維持原樣，請稍後重新嘗試。`;
-      } else if (url) {
-        updatePayload.image_url = url;
+      const failed = results.filter((r) => r.url == null);
+      if (uploaded.length > 0) {
+        updatePayload.image_url = uploaded[0].url;
+        const { data: existingPhotos } = await supabase
+          .from("car_photos")
+          .select("sort_order")
+          .eq("car_id", carId)
+          .order("sort_order", { ascending: false })
+          .limit(1);
+        const nextSortOrder = (existingPhotos?.[0]?.sort_order ?? -1) + 1;
+        await supabase.from("car_photos").insert(
+          uploaded.map((u, i) => ({
+            tenant_id: profile.tenant_id!,
+            car_id: carId,
+            url: u.url,
+            sort_order: nextSortOrder + i,
+          }))
+        );
+      }
+      if (failed.length > 0) {
+        console.error(
+          `[updateCar] ${failed.length} 張照片上傳失敗（車輛 ${carId} 其餘欄位仍會更新）：${failed.map((f) => f.fileName).join("、")}`
+        );
+        photoWarning = `車輛資料已成功更新，但有 ${failed.length} 張照片上傳失敗（${failed
+          .map((f) => f.fileName)
+          .join("、")}），請稍後重新嘗試。`;
       }
     } catch (e) {
       const message = e instanceof Error ? e.message : "未知錯誤";
