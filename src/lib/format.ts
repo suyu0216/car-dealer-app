@@ -15,6 +15,25 @@ export function formatNumber(value: number) {
   return new Intl.NumberFormat("zh-TW").format(value);
 }
 
+/** 2026-08-31 新增：前台（/inventory 展示網站）車輛名稱的標準格式——安安
+ * 反映車型名稱一定要看得到出廠年份，不能只靠旁邊獨立的年式徽章／說明
+ * （容易被忽略、版面窄的時候也可能被截掉），所以把年份直接併進名稱字串
+ * 本身，格式固定「YYYY年式 [廠牌 ]車型」，全站（熱門車款卡片／展間格狀
+ * 列表／本月焦點大圖／詳情 Modal）共用同一支，不要各自組字串格式跑掉。
+ * 沒有年份資料的車輛（year 是 null）就不加年份前綴，正常顯示，不留
+ * 「未知年份」這種奇怪字樣。`includeBrand` 給「畫面上廠牌已經另外獨立
+ * 顯示過一次」的地方用（例如卡片左上角廠牌徽章），避免同一個字串裡廠牌
+ * 重複出現兩次。 */
+export function carDisplayName(
+  car: { brand?: string | null; model_name: string; year?: number | null },
+  options?: { includeBrand?: boolean }
+): string {
+  const yearPrefix = car.year ? `${car.year}年式 ` : "";
+  const includeBrand = options?.includeBrand ?? true;
+  const namePart = includeBrand && car.brand ? `${car.brand} ${car.model_name}` : car.model_name;
+  return `${yearPrefix}${namePart}`;
+}
+
 // =============================================================================
 // 日期／時間——一律固定用「台灣時間」（Asia/Taipei，UTC+8）
 // =============================================================================
