@@ -91,6 +91,32 @@ type CompanyExpense = {
   note: string | null;
 };
 
+/** 公司開銷費用類別，2026-08-31 起改成每個車行自己可以新增/刪除的清單
+ * （company_expense_categories 表），不再是寫死在程式碼裡的固定選項。
+ * is_protected=true 的「人事薪資」不能被刪除，見下面 DEFAULT_EXPENSE_
+ * CATEGORIES 跟 handleDeleteCategory() 的說明。 */
+type ExpenseCategory = {
+  id: string;
+  name: string;
+  is_protected: boolean;
+  sort_order: number;
+};
+
+/** 新車行第一次進「公司營運開銷」分頁、資料庫裡還沒有任何類別列時，
+ * 自動幫這個車行種下的預設類別——跟過去寫死的 7 個類別完全一樣，只是
+ * 現在種進資料庫、之後車行自己可以再新增/刪除。「人事薪資」一定要保留
+ * is_protected: true，因為薪資單／淨利分潤試算是用這個字串完全比對來
+ * 抓底薪/獎金，被刪掉或改名那兩個功能就會漏算，所以不開放刪除。 */
+const DEFAULT_EXPENSE_CATEGORIES: { name: string; is_protected: boolean }[] = [
+  { name: "水電費", is_protected: false },
+  { name: "網路通訊", is_protected: false },
+  { name: "場地租金", is_protected: false },
+  { name: "廣告行銷", is_protected: false },
+  { name: "人事薪資", is_protected: true },
+  { name: "行政雜項", is_protected: false },
+  { name: "專業服務", is_protected: false },
+];
+
 export default function AccountingPage() {
   const supabase = createClient();
   const [activeTab, setActiveTab] = useState<"company" | "summary" | "payroll" | "profitShare">("company");
@@ -134,6 +160,14 @@ export default function AccountingPage() {
   const [note, setNote] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
+  // 費用類別清單（自訂類別功能）
+  const [categories, setCategories] = useState<ExpenseCategory[]>([]);
+  const [categoriesLoaded, setCategoriesLoaded] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState("");
+  const [categorySubmitting, setCategorySubmitting] = useState(false);
+  const [categoryError, setCategoryError] = useState("");
+  const [showCategoryManager, setShowCategoryManager] = useState(false);
+
   // 載入公司開銷列表
   const fetchExpenses = async () => {
     setLoading(true);
@@ -147,6 +181,51 @@ export default function AccountingPage() {
     }
     setLoading(false);
   };
+
+  // 載入這個車行自己的費用類別清單；如果這個車行是第一次進來、資料庫裡
+  // 還完全沒有任何一筆類別（新車行、或這次功能上線之前就存在但還沒被
+  // migration 種過），就自動幫它種下 DEFAULT_EXPENSE_CATEGORIES 這 7 個
+  // 預設類別再重新查一次，讓下拉選單一定看得到東西可以選，不會是空的。
+  const fetchCategories = useCallback(
+    async (tenantId: string) => {
+      const { data, error } = await supabase
+        .from("company_expense_categories")
+        .select("id, name, is_protected, sort_order")
+        .order("sort_order", { ascending: true });
+
+      if (error) {
+        setCategoriesLoaded(true);
+        return;
+      }
+
+      if (data && data.length > 0) {
+        setCategories(data as ExpenseCategory[]);
+        setCategoriesLoaded(true);
+        return;
+      }
+
+      // 空清單：種預設值。
+      const { error: seedError } = await supabase.from("company_expense_categories").insert(
+        DEFAULT_EXPENSE_CATEGORIES.map((c, i) => ({
+          tenant_id: tenantId,
+          name: c.name,
+          is_protected: c.is_protected,
+          sort_order: i,
+        }))
+      );
+
+      if (!seedError) {
+        const { data: seeded } = await supabase
+          .from("company_expense_categories")
+          .select("id, name, is_protected, sort_order")
+          .order("sort_order", { ascending: true });
+        if (seeded) setCategories(seeded as ExpenseCategory[]);
+      }
+      setCategoriesLoaded(true);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    []
+  );
 
   // 資金總覽／薪資單需要的資料：目前使用者的權限/車行、車行起算點設定、
   // 全體員工名單、以及成交合約(deals)／進貨付款(cars)／手動記帳
@@ -187,6 +266,12 @@ export default function AccountingPage() {
         .eq("id", profileData.tenant_id)
         .single();
       if (tenantData) setCashPoolTenant(tenantData as CashPoolTenant);
+
+      // 費用類別清單只有「公司營運開銷」分頁（hasFinanceAccess）用得到，
+      // 純看自己薪資單的員工（payrollOnly）不需要多查這一次。
+      if (allowed) {
+        fetchCategories(profileData.tenant_id);
+      }
     }
 
     const [{ data: carsData }, { data: dealsData }, { data: txData }, { data: staffData }] = await Promise.all([
@@ -229,6 +314,17 @@ export default function AccountingPage() {
     })();
   }, [fetchSharedData]);
 
+  // 類別清單載入完成後，如果目前表單選定的類別（預設值"水電費"，或使用者
+  // 剛好刪掉了自己正選著的那個類別）已經不在清單裡，自動改選清單裡第一個
+  // 還存在的類別，避免表單卡在一個選不到、也送不出去的空值上。
+  useEffect(() => {
+    if (!categoriesLoaded || categories.length === 0) return;
+    if (!categories.some((c) => c.name === category)) {
+      setCategory(categories[0].name);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [categoriesLoaded, categories]);
+
   // 新增開銷
   const handleAddExpense = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -236,9 +332,21 @@ export default function AccountingPage() {
       alert("請填寫項目名稱與金額");
       return;
     }
+    // 2026-08-31 修正：這裡原本完全沒有帶 tenant_id，company_expenses 的
+    // RLS policy（company_expenses_tenant_scoped）要求 tenant_id 一定要
+    // 等於目前登入者的車行，沒帶的話 tenant_id 會是資料庫預設值 null，
+    // 一律會被 RLS 擋下來、新增失敗——這是這次順便發現並修好的既有 bug，
+    // 不是這次新增類別功能造成的。cashPoolProfile 是同一個 useEffect 裡
+    // fetchSharedData() 已經查好的目前登入者資料，一定會有 tenant_id
+    // （沒有的話畫面根本進不到這個分頁，見上面 hasFinanceAccess 判斷）。
+    if (!cashPoolProfile?.tenant_id) {
+      alert("找不到目前車行資訊，請重新整理頁面再試一次。");
+      return;
+    }
 
     setSubmitting(true);
     const { error } = await supabase.from("company_expenses").insert({
+      tenant_id: cashPoolProfile.tenant_id,
       expense_date: expenseDate,
       category,
       title,
@@ -265,6 +373,67 @@ export default function AccountingPage() {
       fetchExpenses();
     }
     setSubmitting(false);
+  };
+
+  // 新增自訂費用類別。名稱重複（同一車行內）會被資料庫的 unique
+  // constraint 擋下來，這裡轉成友善訊息。
+  // 這是分頁裡一個獨立的 type="button" 小按鈕（不是包在自己的
+  // <form> 裡），不是表單送出事件，不需要接 FormEvent／preventDefault。
+  const handleAddCategory = async () => {
+    const name = newCategoryName.trim();
+    setCategoryError("");
+    if (!name) {
+      setCategoryError("請輸入類別名稱。");
+      return;
+    }
+    if (!cashPoolProfile?.tenant_id) {
+      setCategoryError("找不到目前車行資訊，請重新整理頁面再試一次。");
+      return;
+    }
+    if (categories.some((c) => c.name === name)) {
+      setCategoryError("這個類別名稱已經存在了。");
+      return;
+    }
+
+    setCategorySubmitting(true);
+    const { data, error } = await supabase
+      .from("company_expense_categories")
+      .insert({
+        tenant_id: cashPoolProfile.tenant_id,
+        name,
+        is_protected: false,
+        sort_order: categories.length,
+      })
+      .select("id, name, is_protected, sort_order")
+      .single();
+
+    if (error || !data) {
+      setCategoryError(
+        error?.code === "23505" ? "這個類別名稱已經存在了。" : `新增類別失敗：${error?.message ?? "未知錯誤"}`
+      );
+    } else {
+      setCategories((prev) => [...prev, data as ExpenseCategory]);
+      setNewCategoryName("");
+    }
+    setCategorySubmitting(false);
+  };
+
+  // 刪除自訂費用類別——is_protected（目前只有「人事薪資」）不給刪，按鈕
+  // 那邊本來就不會顯示，這裡多一層防呆。刪除類別只影響下拉選單以後選不
+  // 選得到，不會動到、也不會刪除任何已經用過這個類別名稱的既有開銷紀錄。
+  const handleDeleteCategory = async (categoryToDelete: ExpenseCategory) => {
+    if (categoryToDelete.is_protected) return;
+    if (!confirm(`確定要刪除「${categoryToDelete.name}」這個類別嗎？已經用過這個類別的舊紀錄不會受影響。`)) return;
+
+    const { error } = await supabase.from("company_expense_categories").delete().eq("id", categoryToDelete.id);
+    if (error) {
+      alert(`刪除類別失敗：${error.message}`);
+      return;
+    }
+    setCategories((prev) => prev.filter((c) => c.id !== categoryToDelete.id));
+    // 如果剛好刪到目前表單選定的那個類別，改選第一個還存在的類別，避免
+    // 表單卡在一個已經不存在的類別值上。
+    setCategory((prev) => (prev === categoryToDelete.name ? "" : prev));
   };
 
   // 計算總公司開銷
@@ -378,20 +547,78 @@ export default function AccountingPage() {
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-neutral-600 mb-1">費用類別</label>
+                <div className="mb-1 flex items-center justify-between">
+                  <label className="block text-xs font-bold text-neutral-600">費用類別</label>
+                  <button
+                    type="button"
+                    onClick={() => setShowCategoryManager((v) => !v)}
+                    className="text-[11px] font-medium text-blue-600 hover:underline"
+                  >
+                    {showCategoryManager ? "收起管理類別" : "⚙️ 管理類別"}
+                  </button>
+                </div>
                 <select
                   value={category}
                   onChange={(e) => setCategory(e.target.value)}
                   className="w-full rounded-lg border border-neutral-300 p-2 text-sm focus:border-blue-500 focus:outline-none"
                 >
-                  <option value="水電費">💧⚡ 水電瓦斯</option>
-                  <option value="網路通訊">🌐 網路與電話費</option>
-                  <option value="場地租金">🏠 展場/停車場租金</option>
-                  <option value="廣告行銷">📣 廣告與行銷費</option>
-                  <option value="人事薪資">👤 底薪/獎金</option>
-                  <option value="行政雜項">🛠️ 辦公用品/雜支</option>
-                  <option value="專業服務">⚖️ 會計/法律服務費</option>
+                  {!categoriesLoaded && <option value="">類別載入中…</option>}
+                  {categoriesLoaded && categories.length === 0 && <option value="">尚無類別，請先新增</option>}
+                  {categories.map((c) => (
+                    <option key={c.id} value={c.name}>
+                      {c.name}
+                    </option>
+                  ))}
                 </select>
+
+                {/* 費用類別自己新增/刪除——安安要求可以自己維護這份清單，
+                    不再是寫死的固定選項。「人事薪資」是保護類別（薪資單／
+                    淨利分潤試算靠這個字串比對計算），不會顯示刪除按鈕。 */}
+                {showCategoryManager && (
+                  <div className="mt-2 rounded-lg border border-neutral-200 bg-neutral-50 p-3">
+                    <ul className="space-y-1">
+                      {categories.map((c) => (
+                        <li key={c.id} className="flex items-center justify-between text-xs text-neutral-700">
+                          <span>
+                            {c.name}
+                            {c.is_protected && (
+                              <span className="ml-1.5 rounded bg-neutral-200 px-1.5 py-0.5 text-[10px] text-neutral-500">
+                                系統保護，不可刪除
+                              </span>
+                            )}
+                          </span>
+                          {!c.is_protected && (
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteCategory(c)}
+                              className="text-neutral-400 hover:text-red-500"
+                            >
+                              🗑 刪除
+                            </button>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                    <div className="mt-2 flex gap-2">
+                      <input
+                        type="text"
+                        value={newCategoryName}
+                        onChange={(e) => setNewCategoryName(e.target.value)}
+                        placeholder="新類別名稱，例如：尾牙聚餐費"
+                        className="flex-1 rounded-lg border border-neutral-300 bg-white p-1.5 text-xs focus:border-blue-500 focus:outline-none"
+                      />
+                      <button
+                        type="button"
+                        disabled={categorySubmitting}
+                        onClick={handleAddCategory}
+                        className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+                      >
+                        {categorySubmitting ? "新增中…" : "新增"}
+                      </button>
+                    </div>
+                    {categoryError && <p className="mt-1.5 text-[11px] text-red-500">{categoryError}</p>}
+                  </div>
+                )}
               </div>
 
               {/* 發給哪位員工：只有「人事薪資」類別才需要，讓「薪資單」分頁
