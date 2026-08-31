@@ -6,7 +6,7 @@ import { CashPoolModule } from "../_components/cash-pool-module";
 import { PayrollModule } from "../_components/payroll-module";
 import { ProfitShareModule } from "../_components/profit-share-module";
 import { getEffectivePermissions } from "@/lib/permissions";
-import type { Profile, Tenant } from "@/lib/supabase/types";
+import type { Profile, RepairItemCategory, Tenant } from "@/lib/supabase/types";
 
 type CashPoolCar = {
   id: string;
@@ -71,7 +71,7 @@ type CashPoolRepairItem = {
   id: string;
   car_id: string;
   item_name: string;
-  category: string;
+  category: RepairItemCategory;
   amount: number;
   status: "pending" | "approved" | "rejected";
   payment_method: "cash" | "bank" | null;
