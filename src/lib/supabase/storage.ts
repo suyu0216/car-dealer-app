@@ -174,6 +174,26 @@ export async function uploadCarPhoto(
 }
 
 /**
+ * 2026-08-31 新增：一次上傳多張車輛照片——安安要求新增車輛時「車輛照片」
+ * 要能一次選多張上傳，不用一張一張重新開表單。逐一呼叫 uploadCarPhoto()
+ * 上傳，個別檔案的成功/失敗結果都保留在回傳陣列裡（帶著 fileName 方便
+ * 呼叫端組錯誤訊息），單一檔案上傳失敗不會影響其他張，也不會中斷整批。
+ */
+export async function uploadCarPhotos(
+  supabase: SupabaseClient,
+  tenantId: string,
+  carId: string,
+  files: File[]
+): Promise<{ url: string | null; error: string | null; fileName: string }[]> {
+  const results: { url: string | null; error: string | null; fileName: string }[] = [];
+  for (const file of files) {
+    const { url, error } = await uploadCarPhoto(supabase, tenantId, carId, file);
+    results.push({ url, error, fileName: file.name });
+  }
+  return results;
+}
+
+/**
  * 上傳車行 Logo 到公開的 car-photos bucket（沿用同一個 bucket、同一套已經
  * 做好租戶隔離的 storage policy，不用另開新 bucket），回傳可以直接當
  * <img src> 用的公開網址。錯誤處理方式跟 uploadCarPhoto() 一致。
