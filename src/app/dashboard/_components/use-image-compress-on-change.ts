@@ -45,3 +45,46 @@ export function useImageCompressOnChange(onSelected?: (file: File) => void) {
 
   return { onChange, compressing };
 }
+
+/**
+ * 2026-08-31 新增：跟上面 useImageCompressOnChange 同一套壓縮邏輯，差別
+ * 是掛在 <input type="file" multiple> 上——一次讀 input.files 裡的「全部」
+ * 檔案（不是只取 [0]），逐一壓縮後用同一個 DataTransfer 重新組回
+ * input.files，順序維持使用者選擇的順序（第一張會是表單邏輯裡的
+ * 「主圖」，見 car-form-modal.tsx 的說明）。安安要求新增車輛的「車輛照片」
+ * 要能一次選多張上傳，不想動到其餘還在用單張版本的地方（品牌 Logo／
+ * 大頭照／見證照等），所以另外開一個函式，不改原本那個。
+ *
+ * onSelected（可選）：選檔當下、壓縮開始「前」就會用原始 File[] 呼叫
+ * 一次，給畫面上「已選 N 張：a.jpg、b.jpg」這種即時清單用，不用等壓縮
+ * 跑完才有回饋。
+ */
+export function useMultiImageCompressOnChange(onSelected?: (files: File[]) => void) {
+  const [compressing, setCompressing] = useState(false);
+
+  const onChange = useCallback(
+    async (e: ChangeEvent<HTMLInputElement>) => {
+      const input = e.currentTarget;
+      // 注意：`Array.from(input.files ?? [])` 這種寫法會讓 TypeScript
+      // 對 `FileList | never[]` 這個聯集型別的 Array.from() 多載推斷失敗、
+      // 整個退化成 `unknown[]`——分開處理 null 分支才會正確推斷出 File[]。
+      const files: File[] = input.files ? Array.from(input.files) : [];
+      if (files.length === 0) return;
+
+      onSelected?.(files);
+
+      setCompressing(true);
+      try {
+        const compressed = await Promise.all(files.map((file) => compressImageFile(file)));
+        const dt = new DataTransfer();
+        for (const file of compressed) dt.items.add(file);
+        input.files = dt.files;
+      } finally {
+        setCompressing(false);
+      }
+    },
+    [onSelected]
+  );
+
+  return { onChange, compressing };
+}

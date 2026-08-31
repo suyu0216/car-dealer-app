@@ -3,7 +3,7 @@
 import { useActionState, useEffect, useState } from "react";
 import { createCar, updateCar, type CarFormState } from "../cars-actions";
 import { useUnsavedChangesGuard } from "./use-unsaved-changes-guard";
-import { useImageCompressOnChange } from "./use-image-compress-on-change";
+import { useMultiImageCompressOnChange } from "./use-image-compress-on-change";
 import { VALID_BODY_TYPES } from "@/lib/supabase/types";
 import type { Car, CarStatus, PaymentMethod, TransferStatus } from "@/lib/supabase/types";
 
@@ -82,7 +82,14 @@ export function CarFormModal({
 }) {
   const action = mode === "create" ? createCar : updateCar;
   const [state, formAction, pending] = useActionState(action, initialState);
-  const { onChange: onPhotoChange, compressing: photoCompressing } = useImageCompressOnChange();
+  // 2026-08-31：安安要求「車輛照片」能一次選多張上傳——改用多檔版本的
+  // 壓縮 hook（見 use-image-compress-on-change.ts），selectedPhotoNames
+  // 純粹給畫面上「已選 N 張：a.jpg、b.jpg」這種即時清單用，不影響實際
+  // 送出的檔案內容（那個由 input 本身的 FormData 帶出去）。
+  const [selectedPhotoNames, setSelectedPhotoNames] = useState<string[]>([]);
+  const { onChange: onPhotosChange, compressing: photoCompressing } = useMultiImageCompressOnChange((files) =>
+    setSelectedPhotoNames(files.map((f) => f.name))
+  );
   const { markDirty, requestClose } = useUnsavedChangesGuard(() => onClose());
 
   // 2026-08-31 新增：安安要求「新增車輛入庫」時，里程/年份/顏色/排氣量/
@@ -221,22 +228,34 @@ export function CarFormModal({
 
             <div className="mt-3">
               <label className="block text-sm font-medium text-neutral-700">
-                {requireOnCreate ? "車輛照片 *" : "車輛照片"}
+                {requireOnCreate ? "車輛照片（可一次選多張）*" : "車輛照片（可一次選多張）"}
               </label>
+              {/* 2026-08-31：安安要求能一次選多張照片上傳——加上 multiple，
+                  name 也跟著改成複數的 "photos"（FormData.getAll 用），
+                  第一張會變成主圖（cars.image_url，全站目前只認這一欄的
+                  地方都吃得到），其餘依選擇順序加進車輛相簿（car_photos），
+                  見 cars-actions.ts 的說明。 */}
               <input
                 type="file"
-                name="photo"
+                name="photos"
                 accept="image/*"
-                onChange={onPhotoChange}
+                multiple
+                onChange={onPhotosChange}
                 required={requireOnCreate}
                 className="mt-1 block w-full text-sm text-neutral-600 file:mr-3 file:rounded-lg file:border-0 file:bg-[#BFA074] file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-white hover:file:bg-[#AD9066]"
               />
               {photoCompressing && (
                 <p className="mt-1 text-xs text-neutral-400">圖片壓縮中…</p>
               )}
+              {!photoCompressing && selectedPhotoNames.length > 0 && (
+                <p className="mt-1 text-xs text-neutral-500">
+                  已選 {selectedPhotoNames.length} 張：{selectedPhotoNames.join("、")}
+                  {selectedPhotoNames.length > 1 && "（第一張是主圖，其餘加進車輛相簿）"}
+                </p>
+              )}
               {car?.image_url && (
                 <p className="mt-1 text-xs text-neutral-400">
-                  已有照片，重新選擇檔案即可更換；不選則維持原照片。
+                  已有照片，重新選擇檔案即可新增／更換；不選則維持原照片。
                 </p>
               )}
             </div>
