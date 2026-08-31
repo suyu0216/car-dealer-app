@@ -192,9 +192,15 @@ export async function createDeal(
     return { error: e instanceof Error ? e.message : "客戶資料不正確。" };
   }
 
+  // 2026-08-31 新增：第一次建立就直接選「已交車」（少見，但草約/已簽約
+  // 都可能事後補登），要記一次 delivered_at——見 types.ts 對這欄的說明，
+  // 「資金總覽」尾款水池事件要用這個時間，不能用 created_at（合約建立
+  // 日跟真正交車收尾款日不一定同一天）。
+  const deliveredAtField = values.status === "delivered" ? { delivered_at: new Date().toISOString() } : {};
+
   const { error } = await supabase
     .from("deals")
-    .insert({ ...values, ...customerFields, tenant_id: profile.tenant_id! });
+    .insert({ ...values, ...customerFields, ...deliveredAtField, tenant_id: profile.tenant_id! });
 
   if (error) {
     return { error: `新增合約失敗：${error.message}` };
@@ -277,7 +283,19 @@ export async function updateDeal(
     return { error: e instanceof Error ? e.message : "客戶資料不正確。" };
   }
 
-  const { error } = await supabase.from("deals").update({ ...values, ...customerFields }).eq("id", id);
+  // 2026-08-31 新增：只在「這次才第一次變成已交車」才記一次 delivered_at
+  // （跟上面 commission_amount 的檢查同一個 alreadyDelivered 判斷）——已經
+  // 是已交車的舊合約重新存檔（例如訂正客戶電話），不會被覆蓋掉真正的
+  // 交車/收尾款日期。見 types.ts 對這欄的說明。
+  const deliveredAtField =
+    values.status === "delivered" && existingDeal.status !== "delivered"
+      ? { delivered_at: new Date().toISOString() }
+      : {};
+
+  const { error } = await supabase
+    .from("deals")
+    .update({ ...values, ...customerFields, ...deliveredAtField })
+    .eq("id", id);
 
   if (error) {
     return { error: `更新合約失敗：${error.message}` };

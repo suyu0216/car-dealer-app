@@ -12,7 +12,9 @@ import { formatCurrency } from "@/lib/format";
 // 變成一個 Server Action 參照，不是真的陣列），見
 // src/lib/repair-item-constants.ts 開頭的說明。
 import { REPAIR_ITEM_CATEGORIES } from "@/lib/repair-item-constants";
-import type { RepairItemCategory, RepairItemStatus } from "@/lib/supabase/types";
+import type { CashPoolMethod, RepairItemCategory, RepairItemStatus } from "@/lib/supabase/types";
+
+const VALID_CASH_POOL_METHODS: readonly CashPoolMethod[] = ["cash", "bank"];
 
 export interface RepairItemFormState {
   error?: string;
@@ -131,10 +133,19 @@ export async function createRepairItem(
  * 一般員工只能送出申請、不能自己核准自己的請款。前端也會隱藏這兩顆
  * 按鈕，但實際的權限判斷一定要在這裡（伺服器端）再做一次，不能只靠
  * 前端藏起來。
- */
+ *
+ * 2026-08-31 新增 paymentMethod 參數：安安反映「請款了但水池的錢沒有
+ * 變少」——查下來是因為 repair_items 這張表原本完全沒有付款方式欄位，
+ * 「資金總覽」水池的四個資料來源（deals/cars/company_expenses/手動記帳）
+ * 從來就沒有把已核准的請款算進去過，不是漏寫哪一行程式，是這張表根本
+ * 沒有可以歸類的欄位。核准撥款（decision === "approved"）當下才需要選
+ * 現金或銀行——這是會計實際付錢出去那一刻才知道的事，不是業務送出
+ * 請款申請時就該決定的，所以放在審核這一步而不是 createRepairItem()。
+ * 退回（rejected）不會有真的付款，paymentMethod 可以不帶。 */
 export async function reviewRepairItem(
   itemId: string,
-  decision: Extract<RepairItemStatus, "approved" | "rejected">
+  decision: Extract<RepairItemStatus, "approved" | "rejected">,
+  paymentMethod?: CashPoolMethod | null
 ): Promise<RepairReviewResult> {
   const { profile } = await requireTenantUser();
 
@@ -142,10 +153,18 @@ export async function reviewRepairItem(
     return { error: "沒有權限執行會計審核，請聯繫車行管理員。" };
   }
 
+  if (decision === "approved" && !VALID_CASH_POOL_METHODS.includes(paymentMethod as CashPoolMethod)) {
+    return { error: "核准撥款前請先選擇撥款方式（現金／銀行），這樣「資金總覽」水池才能正確扣款。" };
+  }
+
   const supabase = await createClient();
   const { error } = await supabase
     .from("repair_items")
-    .update({ status: decision, reviewed_at: new Date().toISOString() })
+    .update({
+      status: decision,
+      reviewed_at: new Date().toISOString(),
+      payment_method: decision === "approved" ? paymentMethod : null,
+    })
     .eq("id", itemId);
 
   if (error) {

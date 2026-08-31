@@ -68,7 +68,7 @@ export default async function DashboardPage() {
     supabase
       .from("repair_items")
       .select(
-        "id, tenant_id, car_id, item_name, vendor_name, handler_name, amount, receipt_number, status, evidence_url, evidence_path, note, reviewed_at, created_at"
+        "id, tenant_id, car_id, item_name, vendor_name, handler_name, amount, receipt_number, status, evidence_url, evidence_path, note, payment_method, reviewed_at, created_at"
       )
       .order("created_at", { ascending: false }),
     // 客戶資料隱私保護：這裡不用額外加 .eq("owner_profile_id", ...) 篩選——
