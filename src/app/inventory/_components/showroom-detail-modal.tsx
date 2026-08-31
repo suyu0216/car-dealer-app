@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { formatCurrency, formatNumber } from "@/lib/format";
+import { carDisplayName, formatCurrency, formatNumber } from "@/lib/format";
 import type { ShowroomCar } from "@/lib/supabase/public-cars";
 import { ShowroomPhotoGallery } from "./showroom-photo-gallery";
 import { ShowroomLightbox } from "./showroom-lightbox";
@@ -92,7 +92,12 @@ export function ShowroomDetailModal({
                   {car.brand ?? "未標示廠牌"}
                 </p>
                 <h2 className="font-showroom-display mt-1 text-xl tracking-wide text-[#171717]">
-                  {car.model_name}
+                  {/* 2026-08-31：廠牌已經在上面單獨顯示一次，這裡用
+                      includeBrand:false 併入出廠年份、不重複帶廠牌——見
+                      format.ts carDisplayName 的說明。下面規格格狀卡片
+                      裡仍保留獨立的「出廠年份」欄位，那是完整規格表的
+                      一部分，跟標題重複無妨。 */}
+                  {carDisplayName(car, { includeBrand: false })}
                 </h2>
               </div>
               <button

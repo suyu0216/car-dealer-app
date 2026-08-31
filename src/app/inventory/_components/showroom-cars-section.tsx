@@ -27,7 +27,7 @@
 // 保留 DOM／捲動位置，關掉之後列表捲動位置不會跳掉。
 import { useEffect, useState } from "react";
 import { VALID_BODY_TYPES } from "@/lib/supabase/types";
-import { formatCurrency } from "@/lib/format";
+import { carDisplayName, formatCurrency } from "@/lib/format";
 import type { ShowroomTenant } from "@/lib/supabase/public-tenant";
 import type { ShowroomCar } from "@/lib/supabase/public-cars";
 import { ShowroomGrid } from "./showroom-grid";
@@ -576,10 +576,13 @@ function FeaturedCarHero({ car, onSelect }: { car: ShowroomCar; onSelect: () => 
           {car.is_featured ? "本月焦點車款" : "現正展示"}
         </div>
         <h2 className="font-showroom-display mt-2.5 text-[28px] leading-tight sm:text-[42px]">
-          {car.brand ? `${car.brand} ${car.model_name}` : car.model_name}
+          {/* 2026-08-31：出廠年份併進標題本身，見 format.ts carDisplayName
+              的說明；原本另外放在下面副標題裡的「YYYY 年式」拿掉，避免
+              年份重複顯示兩次。 */}
+          {carDisplayName(car)}
         </h2>
         <p className="mt-2 text-[13.5px] text-[#d8d9db]">
-          {[car.year ? `${car.year} 年式` : null, car.color, "現車展示中"].filter(Boolean).join(" ・ ")}
+          {[car.color, "現車展示中"].filter(Boolean).join(" ・ ")}
         </p>
         <div className="mt-5 flex flex-wrap items-center gap-6">
           <p className="font-showroom-display text-2xl tabular-nums">

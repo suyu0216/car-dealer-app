@@ -1,6 +1,6 @@
 "use client";
 
-import { formatCurrency } from "@/lib/format";
+import { carDisplayName, formatCurrency } from "@/lib/format";
 import type { ShowroomCar } from "@/lib/supabase/public-cars";
 import { FadeImage } from "./fade-image";
 
@@ -144,10 +144,13 @@ function ShowroomCard({
             (large ? "text-base lg:text-xl" : "text-[14.5px]")
           }
         >
-          {car.model_name}
+          {/* 2026-08-31：廠牌已經是照片左上角的獨立徽章，這裡用
+              includeBrand:false 併入出廠年份、不重複帶廠牌；原本下面
+              另外一個「年式」小徽章移除，避免年份重複顯示兩次——見
+              format.ts carDisplayName 的說明。 */}
+          {carDisplayName(car, { includeBrand: false })}
         </h3>
         <div className="mt-2 flex flex-wrap gap-1.5">
-          {car.year && <MiniBadge>{car.year} 年式</MiniBadge>}
           {car.color && <MiniBadge>{car.color}</MiniBadge>}
           {large && car.body_type && <MiniBadge>{car.body_type}</MiniBadge>}
         </div>

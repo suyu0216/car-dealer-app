@@ -3,7 +3,7 @@
 // 留白的區塊，像藝廊照片下方的說明牌那樣。價格維持橘紅色（見
 // showroom-shell.tsx 的視覺風格說明：跳色只留給價格跟「近期上架」急迫
 // 標籤）。
-import { formatCurrency } from "@/lib/format";
+import { carDisplayName, formatCurrency } from "@/lib/format";
 import type { ShowroomCar } from "@/lib/supabase/public-cars";
 import { FadeImage } from "./fade-image";
 
@@ -36,7 +36,10 @@ export function FeaturedCard({ car, onClick }: { car: ShowroomCar; onClick: () =
           <p className="text-[11px] uppercase tracking-[0.2em] text-[#737373]">{car.brand}</p>
         )}
         <h3 className="font-showroom-display mt-1.5 truncate text-lg tracking-wide text-[#171717]">
-          {car.model_name}
+          {/* 2026-08-31：廠牌已經在上面單獨顯示一次，這裡用 includeBrand:
+              false 併入出廠年份、不重複帶廠牌——見 format.ts carDisplayName
+              的說明。 */}
+          {carDisplayName(car, { includeBrand: false })}
         </h3>
         <div className="mt-3.5 h-px w-full bg-[#E5E5E5]" />
         <p className="font-showroom-display mt-3 text-xl tabular-nums text-[#E8542D]">
