@@ -208,6 +208,14 @@ alter table public.cars add column if not exists detailing_cost   numeric(12, 2)
 alter table public.cars add column if not exists repair_cost      numeric(12, 2); -- 整備維修成本
 alter table public.cars add column if not exists final_price      numeric(12, 2); -- 最終成交價
 
+-- 2026-08-31：「最終成本價格」——比 purchase_price（收購進價，可能刻意
+-- 墊高過）更嚴格的真實成本欄位，只有 canViewFinalCost 權限的人（預設
+-- 只有會計/老闆，見 src/lib/permissions.ts）看得到／填得到，即使有一般
+-- 的 canViewCost 也不例外。純粹是會計內部記錄，不影響淨利／分潤試算、
+-- 業務抽成等既有的成本計算（那些一律還是讀 purchase_price）。
+alter table public.cars add column if not exists final_cost_price numeric(12, 2);
+comment on column public.cars.final_cost_price is '真實最終成本價格，只有「檢視最終成本」權限的人（預設只有會計/老闆，見 permissions.ts 的 canViewFinalCost）看得到／填得到，即使有「檢視成本」權限也不例外。純粹是會計內部記錄用途，不影響淨利／分潤試算、業務抽成等既有的成本計算（那些一律還是用 purchase_price）。';
+
 -- 展示用主圖（先用網址欄位，不經 Supabase Storage）
 alter table public.cars add column if not exists image_url        text;
 
@@ -467,6 +475,31 @@ comment on table public.deals is '買賣合約與交易；status: draft(草約) 
 -- 表單上填寫（一般業務不開放自己填，避免球員兼裁判）。「業務薪資」模組
 -- 會依 salesperson_id 把這欄加總成每個人的業績/抽成明細。
 alter table public.deals add column if not exists commission_amount numeric(12, 2);
+
+-- 收款方式（給「資金總覽」水池分類用）：這幾欄原本就已經在正式環境上
+-- 線，但一直漏掉沒同步進這份 schema 檔案，這次一併補上。
+--
+-- payment_method（已棄用，2026-08-31 起改用下面兩欄分開記錄）：舊版
+-- 「訂金＋尾款」共用同一種收款方式的欄位，保留只是避免遺失歷史資料。
+alter table public.deals add column if not exists payment_method text;
+alter table public.deals drop constraint if exists deals_payment_method_check;
+alter table public.deals add constraint deals_payment_method_check
+  check (payment_method is null or payment_method in ('cash', 'bank'));
+comment on column public.deals.payment_method is '【已棄用，2026-08-31 起改用 deposit_payment_method／balance_payment_method 分開記錄訂金/尾款收款方式】舊版「訂金＋尾款共用一種收款方式」欄位，保留只是避免遺失歷史資料，新版表單／資金總覽計算不再讀寫這個欄位。';
+
+-- 訂金／尾款分開記錄收款方式：實務上訂金常常是現金、尾款才走匯款（或
+-- 反過來），單一 payment_method 欄位沒辦法反映，會導致「資金總覽」現金
+-- ／銀行水池對不起來。
+alter table public.deals add column if not exists deposit_payment_method text;
+alter table public.deals add column if not exists balance_payment_method text;
+alter table public.deals drop constraint if exists deals_deposit_payment_method_check;
+alter table public.deals add constraint deals_deposit_payment_method_check
+  check (deposit_payment_method is null or deposit_payment_method in ('cash', 'bank'));
+alter table public.deals drop constraint if exists deals_balance_payment_method_check;
+alter table public.deals add constraint deals_balance_payment_method_check
+  check (balance_payment_method is null or balance_payment_method in ('cash', 'bank'));
+comment on column public.deals.deposit_payment_method is '訂金收款方式（cash=現金／bank=銀行匯款），給「資金總覽」水池分類用。取代舊版 payment_method 只能記一種「訂金＋尾款共用」方式的限制。';
+comment on column public.deals.balance_payment_method is '尾款收款方式（cash=現金／bank=銀行匯款），只有合約狀態到「已交車」才會實際收到尾款，資金總覽只在 delivered 狀態才會把這筆金額算進水池。';
 
 create index if not exists deals_tenant_id_idx on public.deals (tenant_id);
 create index if not exists deals_car_id_idx on public.deals (car_id);
