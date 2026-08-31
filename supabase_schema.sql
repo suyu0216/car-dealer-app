@@ -407,6 +407,18 @@ comment on table public.repair_items is '車輛維修請款明細；status: pend
 -- 不會跟舊的 evidence_url 混在一起。
 alter table public.repair_items add column if not exists evidence_path text;
 
+-- 2026-08-31 新增：會計核准撥款當下選的撥款方式，給「資金總覽」水池
+-- 分類這筆請款撥款要算進現金池還是銀行池——原本這張表完全沒有付款
+-- 方式欄位，水池從來沒有管道知道請款撥款的錢從哪裡出，見 cash-pool.ts
+-- 開頭的說明。NULL＝尚未核准，或核准當下沒選（這個功能上線之前就已經
+-- 核准的歷史資料）。
+alter table public.repair_items add column if not exists payment_method text;
+alter table public.repair_items drop constraint if exists repair_items_payment_method_check;
+alter table public.repair_items add constraint repair_items_payment_method_check
+  check (payment_method is null or payment_method in ('cash', 'bank'));
+comment on column public.repair_items.payment_method is
+  '會計核准撥款當下選的撥款方式：cash=現金 / bank=匯款，NULL=尚未核准，或核准當下沒選（歷史資料）。給「資金總覽」水池分類這筆請款撥款要算進現金池還是銀行池；只有 status=approved 且這欄有值才會被算進水池流出。';
+
 create index if not exists repair_items_tenant_id_idx on public.repair_items (tenant_id);
 create index if not exists repair_items_car_id_idx on public.repair_items (car_id);
 
@@ -500,6 +512,14 @@ alter table public.deals add constraint deals_balance_payment_method_check
   check (balance_payment_method is null or balance_payment_method in ('cash', 'bank'));
 comment on column public.deals.deposit_payment_method is '訂金收款方式（cash=現金／bank=銀行匯款），給「資金總覽」水池分類用。取代舊版 payment_method 只能記一種「訂金＋尾款共用」方式的限制。';
 comment on column public.deals.balance_payment_method is '尾款收款方式（cash=現金／bank=銀行匯款），只有合約狀態到「已交車」才會實際收到尾款，資金總覽只在 delivered 狀態才會把這筆金額算進水池。';
+
+-- 2026-08-31 新增：合約狀態第一次被標記成 delivered（已交車）的時間戳
+-- 記——「資金總覽」尾款水池事件原本誤用 created_at（合約建立日）當作
+-- 尾款實際收款日期，如果合約是起算點之前建立、卻是起算點之後才交車
+-- 收尾款，會被錯誤排除在外算不到，見 cash-pool.ts 開頭的說明。
+alter table public.deals add column if not exists delivered_at timestamptz;
+comment on column public.deals.delivered_at is '合約狀態第一次被標記成 delivered（已交車）的時間戳記，只會被設定一次、之後不會再變動。NULL 表示這筆合約還沒交車過。';
+update public.deals set delivered_at = created_at where status = 'delivered' and delivered_at is null;
 
 create index if not exists deals_tenant_id_idx on public.deals (tenant_id);
 create index if not exists deals_car_id_idx on public.deals (car_id);
