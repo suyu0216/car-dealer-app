@@ -35,7 +35,10 @@ type PayrollDeal = {
   final_price: number;
   deposit_amount: number | null;
   balance_amount: number | null;
-  payment_method: "cash" | "bank" | null;
+  // 2026-08-31：訂金／尾款分開記錄收款方式，取代舊版單一 payment_method
+  // （見 deals-actions.ts／cash-pool.ts 的說明）。
+  deposit_payment_method: "cash" | "bank" | null;
+  balance_payment_method: "cash" | "bank" | null;
   status: "draft" | "signed" | "delivered";
   salesperson_id: string | null;
   commission_amount: number | null;
@@ -283,7 +286,7 @@ export default function AccountingPage() {
       supabase
         .from("deals")
         .select(
-          "id, car_id, customer_name, final_price, deposit_amount, balance_amount, payment_method, status, salesperson_id, commission_amount, created_at"
+          "id, car_id, customer_name, final_price, deposit_amount, balance_amount, deposit_payment_method, balance_payment_method, status, salesperson_id, commission_amount, created_at"
         ),
       supabase.from("transactions").select("*").order("date", { ascending: false }),
       supabase.from("profiles").select("id, name").order("name"),
