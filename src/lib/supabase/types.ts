@@ -148,6 +148,13 @@ export interface Car {
   floor_price: number | null;
   selling_price: number | null;
   final_price: number | null;
+  /** 2026-08-31 新增：真實的「最終成本價格」，跟 purchase_price（收購
+   * 進價，可能刻意墊高過）分開存放。只有 canViewFinalCost 權限（見
+   * permissions.ts，預設只有會計/老闆）看得到／填得到，即使有一般的
+   * canViewCost 權限也不例外。純粹是會計內部記錄用途，不影響淨利／
+   * 分潤試算、業務抽成等既有的成本計算（那些一律還是讀 purchase_price，
+   * 沒有這個欄位的權限也完全不受影響）。 */
+  final_cost_price: number | null;
   // 會計結帳快照：只有在 status === 'sold' 時才會有值，見
   // supabase_schema.sql 對這三欄的說明。非 null 代表這輛車已經結帳封存。
   closed_at: string | null;
@@ -310,9 +317,20 @@ export interface Deal {
   final_price: number;
   deposit_amount: number | null;
   balance_amount: number | null;
-  /** 訂金＋尾款合計的收款方式：cash=現金 / bank=匯款，NULL=尚未記錄。
-   * 給資金總覽水池分類這筆收款要算進現金還是銀行。 */
+  /** 【已棄用，2026-08-31 起改用 deposit_payment_method／
+   * balance_payment_method 分開記錄】舊版「訂金＋尾款合計」共用一種收款
+   * 方式的欄位，保留只是避免遺失歷史資料，新版表單／資金總覽計算不再
+   * 讀寫這個欄位。 */
   payment_method: CashPoolMethod | null;
+  /** 訂金收款方式：cash=現金 / bank=匯款，NULL=尚未收訂金/未記錄。給
+   * 資金總覽水池分類這筆訂金要算進現金池還是銀行池。 */
+  deposit_payment_method: CashPoolMethod | null;
+  /** 尾款收款方式：cash=現金 / bank=匯款，NULL=尚未收尾款/未記錄。只有
+   * 合約狀態到「已交車」，資金總覽才會把這筆金額算進水池（見
+   * cash-pool.ts）。訂金／尾款分開記錄是因為實務上常常不是同一種付款
+   * 方式（例如訂金收現金、尾款走匯款），舊版單一 payment_method 欄位
+   * 沒辦法反映，會導致現金／銀行水池對不起來。 */
+  balance_payment_method: CashPoolMethod | null;
   loan_status: string | null;
   salesperson_id: string | null;
   /** 這筆合約要撥給 salesperson_id 的預估佣金；只有車行管理員能填寫/修改。 */
