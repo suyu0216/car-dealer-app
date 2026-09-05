@@ -1,14 +1,16 @@
 "use client";
 
 import { useActionState, useEffect, useState, useTransition } from "react";
-import type { Car, RepairItem, RepairItemStatus, Role } from "@/lib/supabase/types";
-import { formatCurrency } from "@/lib/format";
+import type { CashPoolMethod, Car, FinancialAccount, RepairItem, RepairItemCategory, RepairItemStatus } from "@/lib/supabase/types";
+import { formatCurrency, formatDate } from "@/lib/format";
 import {
   createRepairItem,
   reviewRepairItem,
   type RepairItemFormState,
 } from "../repair-items-actions";
+import { REPAIR_ITEM_CATEGORIES } from "@/lib/repair-item-constants";
 import { useUnsavedChangesGuard } from "./use-unsaved-changes-guard";
+import { CASH_POOL_METHOD_OPTIONS } from "@/lib/cash-pool";
 
 export const REPAIR_STATUS_LABEL: Record<RepairItemStatus, string> = {
   pending: "待會計審核",
@@ -23,29 +25,48 @@ export const REPAIR_STATUS_STYLE: Record<RepairItemStatus, string> = {
   rejected: "bg-[#FBEAEA] text-[#B75454] ring-[#F0D3D3]",
 };
 
-function totalCost(car: Car, approvedPrepCost: number) {
-  return Number(car.purchase_price) + approvedPrepCost + Number(car.transfer_fee ?? 0);
-}
+export const REPAIR_CATEGORY_ICON: Record<RepairItemCategory, string> = {
+  維修: "🔧",
+  美容: "✨",
+  其他: "📎",
+};
 
 export function CarMaintenanceTab({
   car,
   repairItems,
-  role,
+  canReview,
   canViewCost,
+  canViewCommission,
   receiptUrls,
+  staff,
+  financialAccounts,
 }: {
   car: Car;
   repairItems: RepairItem[];
-  role: Role;
+  /** 是否能核准/退回這輛車底下的維修請款——2026-08-29 起改用
+   * canApproveRepairs 權限開關判斷（老闆恆為 true，會計預設也是），不再
+   * 只認「是不是老闆」，見 src/lib/permissions.ts。 */
+  canReview: boolean;
   /** 車輛財務損益卡（收購價/總成本/毛利）算敏感財務資訊，沒權限就整卡遮罩；
    * 底下的維修請款紀錄本身（金額、審核狀態）仍然照舊顯示——那是業務日常
    * 要送出/追蹤的請款流程，不是「進貨成本／總利潤」。 */
   canViewCost: boolean;
+  /** 2026-08-30 修正：這張財務損益卡原本只看 canViewCost，已結帳車輛的
+   * 「車輛總成本」直接讀 closed_total_cost 快照——這個快照本身已經封存
+   * 業務抽成，等於任何看得到成本的人（例如預設的店長）都會連帶看到抽成
+   * 金額，繞過了車輛詳情頁「車輛資訊」分頁那邊已經做好的抽成隱私保護
+   * （只有 canViewCommission 才看得到抽成，見 car-detail-modal.tsx／
+   * car-card.tsx 的說明）。這裡補上同一個權限開關，維修請款分頁的財務
+   * 損益卡也要跟著擋。 */
+  canViewCommission: boolean;
   /** evidence_path -> 伺服器簽發的短效期 signed URL（見 dashboard/page.tsx）。 */
   receiptUrls: Record<string, string>;
+  /** 「墊款業務/經手人」下拉選單用——同車行的員工清單，新邀請的員工會
+   * 自動出現在這裡，不用再手動打字。 */
+  staff: { id: string; name: string | null }[];
+  /** 2026-09-04 新增：核准撥款時選帳戶用，見下面 RepairItemRow。 */
+  financialAccounts: FinancialAccount[];
 }) {
-  const canReview = role === "tenant_admin";
-
   // 車輛售出即結帳：car.closed_at 非 null 代表已經在售出當下把維修整備費
   // 封存過（見 cars-actions.ts 的 computeClosingFields()），這裡就顯示
   // 封存當時的數字，不再即時重新加總 repair_items —— 不然之後又核准了
@@ -55,15 +76,20 @@ export function CarMaintenanceTab({
   const approvedItems = repairItems.filter((r) => r.status === "approved");
   const liveTotalPrepCost = approvedItems.reduce((sum, r) => sum + Number(r.amount), 0);
   const totalPrepCost = isClosed ? Number(car.closed_prep_cost ?? 0) : liveTotalPrepCost;
-  const cost = isClosed ? Number(car.closed_total_cost ?? 0) : totalCost(car, liveTotalPrepCost);
+  // 2026-08-30 修正：業務抽成只有已結帳車輛才有快照，未結帳一律當作 0
+  // （合約還沒交車結案，不會有抽成數字）；「車輛總成本」跟「淨利/毛利」
+  // 都改成從各項成本組件直接加總（見下面 VehiclePnlCard），不再直接讀
+  // closed_total_cost 快照——這樣才能依權限決定要不要把抽成算進去，也
+  // 保證卡片上顯示的每一項成本加起來一定等於顯示的總成本，不會因為
+  // 「看得到的項目」跟「看不到的抽成」兜不起來。
+  const commissionCost = isClosed ? Number(car.closed_commission_cost ?? 0) : 0;
   const revenueBasis = car.final_price ?? car.selling_price ?? null;
-  const profit = revenueBasis != null ? revenueBasis - cost : null;
 
   return (
     <div className="space-y-6">
       {isClosed && (
         <p className="rounded-lg bg-[#EEF2ED] px-3 py-2 text-xs text-[#5F7563]">
-          🔒 這輛車已於 {new Date(car.closed_at!).toLocaleDateString("zh-TW")}{" "}
+          🔒 這輛車已於 {formatDate(car.closed_at)}{" "}
           結帳封存，以下成本數字是售出當下的快照，不會再隨新的維修請款變動。
         </p>
       )}
@@ -72,10 +98,11 @@ export function CarMaintenanceTab({
           purchasePrice={car.purchase_price}
           prepCost={totalPrepCost}
           transferFee={car.transfer_fee}
-          totalCost={cost}
+          taxAmount={car.tax_amount}
+          commissionCost={commissionCost}
+          canViewCommission={canViewCommission}
           revenueBasis={revenueBasis}
           isFinalPrice={car.final_price != null}
-          profit={profit}
         />
       ) : (
         <section className="rounded-2xl border border-neutral-200 bg-[#F8F9FA] p-4 text-center text-sm text-neutral-400">
@@ -83,9 +110,14 @@ export function CarMaintenanceTab({
         </section>
       )}
 
-      <RepairItemForm carId={car.id} />
+      <RepairItemForm carId={car.id} staff={staff} />
 
-      <RepairItemList items={repairItems} canReview={canReview} receiptUrls={receiptUrls} />
+      <RepairItemList
+        items={repairItems}
+        canReview={canReview}
+        receiptUrls={receiptUrls}
+        financialAccounts={financialAccounts}
+      />
     </div>
   );
 }
@@ -94,19 +126,38 @@ function VehiclePnlCard({
   purchasePrice,
   prepCost,
   transferFee,
-  totalCost,
+  taxAmount,
+  commissionCost,
+  canViewCommission,
   revenueBasis,
   isFinalPrice,
-  profit,
 }: {
   purchasePrice: number;
   prepCost: number;
   transferFee: number | null;
-  totalCost: number;
+  /** 稅金/發票稅金——2026-08-30 之前這張卡片的成本拆解沒有把這個欄位
+   * 秀出來，即使 car-form-modal.tsx 新增/編輯車輛時本來就能填，容易讓人
+   * 誤以為系統沒有算到、跟結帳當下（closed_total_cost）算出來的數字對
+   * 不起來，見上面 totalCost() 的說明。 */
+  taxAmount: number | null;
+  /** 已結帳車輛的業務抽成快照，未結帳一律 0——是不是薪資隱私、要不要
+   * 顯示看 canViewCommission。 */
+  commissionCost: number;
+  /** 業務抽成是薪資隱私，只有「看得到全體薪資」或「會計/財務管理」才是
+   * true，見 cars-manager.tsx 怎麼算這個值、car-card.tsx 的同一套說明。 */
+  canViewCommission: boolean;
   revenueBasis: number | null;
   isFinalPrice: boolean;
-  profit: number | null;
 }) {
+  const showCommission = canViewCommission && commissionCost > 0;
+  // 車輛總成本／淨利一律用「看得到的項目」直接加總，不是讀 closed_total_cost
+  // 快照——沒有 canViewCommission 的人，這裡算出來的總成本／淨利就完全
+  // 不含抽成，卡片上顯示的每一項成本（收購價/維修整備費/規費/稅金〔/
+  // 抽成〕）加起來一定剛好等於顯示的總成本，不會有「看得到的項目兜不出
+  // 顯示總數」的落差、也不會被拿來反推抽成金額。
+  const totalCost =
+    purchasePrice + prepCost + Number(transferFee ?? 0) + Number(taxAmount ?? 0) + (showCommission ? commissionCost : 0);
+  const profit = revenueBasis != null ? revenueBasis - totalCost : null;
   return (
     <section className="rounded-2xl border border-neutral-200 bg-[#F8F9FA] p-4">
       <h3 className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
@@ -119,6 +170,14 @@ function VehiclePnlCard({
         <CostChip label="維修整備費" value={prepCost} />
         <span className="text-neutral-300">+</span>
         <CostChip label="規費" value={transferFee ?? 0} />
+        <span className="text-neutral-300">+</span>
+        <CostChip label="稅金" value={taxAmount ?? 0} />
+        {showCommission && (
+          <>
+            <span className="text-neutral-300">+</span>
+            <CostChip label="業務抽成" value={commissionCost} />
+          </>
+        )}
         <span className="text-neutral-300">=</span>
         <CostChip label="車輛總成本" value={totalCost} strong />
       </div>
@@ -135,6 +194,7 @@ function VehiclePnlCard({
         <div>
           <p className="text-[11px] text-neutral-400">
             {isFinalPrice ? "實際淨利" : "預估毛利"}
+            {!showCommission && commissionCost > 0 ? "（不含業務抽成）" : ""}
           </p>
           <p
             className={
@@ -184,7 +244,13 @@ function CostChip({
 
 const formInitialState: RepairItemFormState = {};
 
-function RepairItemForm({ carId }: { carId: string }) {
+function RepairItemForm({
+  carId,
+  staff,
+}: {
+  carId: string;
+  staff: { id: string; name: string | null }[];
+}) {
   const [open, setOpen] = useState(false);
   const [resetKey, setResetKey] = useState(0);
   const [state, formAction, pending] = useActionState(createRepairItem, formInitialState);
@@ -239,8 +305,27 @@ function RepairItemForm({ carId }: { carId: string }) {
           <RepairField label="金額" name="amount" type="number" placeholder="0" required />
         </div>
         <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label htmlFor="category" className="block text-sm font-medium text-neutral-700">
+              類別
+            </label>
+            <select
+              id="category"
+              name="category"
+              defaultValue="維修"
+              className="mt-1 w-full rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm text-neutral-800 outline-none focus:border-[#BFA074] focus:bg-white"
+            >
+              {REPAIR_ITEM_CATEGORIES.map((c) => (
+                <option key={c} value={c}>
+                  {REPAIR_CATEGORY_ICON[c]} {c}
+                </option>
+              ))}
+            </select>
+          </div>
           <RepairField label="廠商/保養廠名稱" name="vendor_name" placeholder="例如：三久烤漆廠" />
-          <RepairField label="墊款業務/經手人" name="handler_name" placeholder="姓名" />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <HandlerNameSelect staff={staff} />
         </div>
         <div className="grid grid-cols-2 gap-3">
           <RepairField label="單據號碼/發票號" name="receipt_number" />
@@ -290,6 +375,48 @@ function RepairItemForm({ carId }: { carId: string }) {
   );
 }
 
+/**
+ * 「墊款業務/經手人」下拉選單——原本是自由輸入文字，同一個人每次可能打
+ * 法不一樣（「小明」「王小明」…），沒辦法真的統計「誰經手了多少筆」。
+ * 改成從同車行的員工清單選，新邀請的員工會自動出現在這裡，不用另外
+ * 手動維護一份名單。存的還是純文字（跟 repair_items.handler_name 欄位
+ * 型別一致，不改資料庫），只是來源固定從員工清單選，不是手打——這裡故意
+ * 不加「其他/手動輸入」的退路，維修請款與會計、維修模組匯出的分頁跨檔案
+ * 匯出時共用這份清單，見 maintenance-module.tsx 也用到這個元件。
+ */
+export function HandlerNameSelect({
+  staff,
+  defaultValue,
+}: {
+  staff: { id: string; name: string | null }[];
+  defaultValue?: string;
+}) {
+  const names = Array.from(new Set(staff.map((s) => s.name).filter((n): n is string => !!n))).sort(
+    (a, b) => a.localeCompare(b)
+  );
+
+  return (
+    <div>
+      <label htmlFor="handler_name" className="block text-sm font-medium text-neutral-700">
+        墊款業務/經手人
+      </label>
+      <select
+        id="handler_name"
+        name="handler_name"
+        defaultValue={defaultValue ?? ""}
+        className="mt-1 w-full rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm text-neutral-800 outline-none focus:border-[#BFA074] focus:bg-white"
+      >
+        <option value="">請選擇</option>
+        {names.map((name) => (
+          <option key={name} value={name}>
+            {name}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
 function RepairField({
   label,
   name,
@@ -326,10 +453,13 @@ function RepairItemList({
   items,
   canReview,
   receiptUrls,
+  financialAccounts,
 }: {
   items: RepairItem[];
   canReview: boolean;
   receiptUrls: Record<string, string>;
+  /** 2026-09-04 新增：核准撥款時選帳戶用，見下面 RepairItemRow。 */
+  financialAccounts: FinancialAccount[];
 }) {
   if (items.length === 0) {
     return (
@@ -351,6 +481,7 @@ function RepairItemList({
             item={item}
             canReview={canReview}
             receiptUrl={item.evidence_path ? receiptUrls[item.evidence_path] : (item.evidence_url ?? undefined)}
+            financialAccounts={financialAccounts}
           />
         ))}
       </ul>
@@ -363,31 +494,60 @@ export function RepairItemRow({
   canReview,
   receiptUrl,
   carLabel,
+  highlighted,
+  financialAccounts,
 }: {
   item: RepairItem;
   canReview: boolean;
   receiptUrl: string | undefined;
   /** 跨車輛列表（獨立維修模組）才需要顯示是哪一輛車，單一車輛的分頁裡不用。 */
   carLabel?: string;
+  /** 從通知鈴鐺點進來、傳送門指到這一筆——加上錨點 id 讓頁面可以自動
+   * 捲到這裡，並用外框反白幾秒，讓人一眼看到「就是這筆」。 */
+  highlighted?: boolean;
+  /** 2026-09-04 新增：核准撥款時選填指定是從哪個金流帳戶付出去的（新版
+   * 多帳戶架構，跟下面 paymentMethod 現金/銀行並存，不是取代關係）。 */
+  financialAccounts: FinancialAccount[];
 }) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  // 2026-08-31 新增：核准撥款前要選現金還是銀行，「資金總覽」水池才知道
+  // 這筆錢要從哪一池扣——這是會計實際付款當下才知道的事，跟建立請款
+  // 申請時完全無關，所以只在這個核准按鈕旁邊多一個下拉選單，不動
+  // createRepairItem() 那邊的表單。退回不用選，不會有真的付款。
+  const [paymentMethod, setPaymentMethod] = useState("");
+  // 2026-09-04 新增：選填，見上面 financialAccounts 的說明。
+  const [accountId, setAccountId] = useState("");
 
   function decide(decision: "approved" | "rejected") {
     startTransition(async () => {
-      const result = await reviewRepairItem(item.id, decision);
+      const method = decision === "approved" ? ((paymentMethod || null) as CashPoolMethod | null) : null;
+      const account = decision === "approved" ? accountId || null : null;
+      const result = await reviewRepairItem(item.id, decision, method, account);
       setError(result?.error ?? null);
     });
   }
 
   return (
-    <li className="rounded-xl border border-neutral-200 bg-white p-3">
+    <li
+      id={`repair-item-${item.id}`}
+      className={
+        "rounded-xl border bg-white p-3 transition " +
+        (highlighted ? "border-[#BFA074] ring-2 ring-[#BFA074] ring-offset-2" : "border-neutral-200")
+      }
+    >
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
           {carLabel && (
             <p className="text-xs font-medium text-[#A6793D]">{carLabel}</p>
           )}
-          <p className="text-sm font-medium text-neutral-800">{item.item_name}</p>
+          <p className="text-sm font-medium text-neutral-800">
+            <span aria-hidden className="mr-1">
+              {REPAIR_CATEGORY_ICON[item.category] ?? "🔧"}
+            </span>
+            {item.item_name}
+            <span className="ml-1.5 text-xs font-normal text-neutral-400">{item.category}</span>
+          </p>
           <p className="mt-0.5 text-xs text-neutral-500">
             {[item.vendor_name, item.handler_name && `經手人：${item.handler_name}`]
               .filter(Boolean)
@@ -423,8 +583,41 @@ export function RepairItemRow({
       </div>
 
       {canReview && item.status === "pending" && (
-        <div className="mt-2 flex justify-end gap-2 border-t border-neutral-100 pt-2">
+        <div className="mt-2 flex flex-wrap items-center justify-end gap-2 border-t border-neutral-100 pt-2">
           {error && <p className="mr-auto text-xs text-red-600">{error}</p>}
+          {/* 2026-08-31 新增：核准撥款前先選現金還是銀行，「資金總覽」
+              水池才知道這筆錢要從哪一池扣，見 reviewRepairItem() 的說明。
+              退回不用選，這裡的值只有按下「核准撥款」才會被送出。 */}
+          <select
+            value={paymentMethod}
+            onChange={(e) => setPaymentMethod(e.target.value)}
+            className="rounded-lg border border-neutral-200 bg-white px-2 py-1 text-xs text-neutral-700 outline-none focus:border-[#BFA074]"
+          >
+            <option value="">撥款方式…</option>
+            {CASH_POOL_METHOD_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+          {/* 2026-09-04 新增：選填，這筆撥款是從哪個金流帳戶付出去的——見
+              financial-accounts-module.tsx。撥款是錢從帳戶付出去，標
+              「出帳」而不是「入帳」（見 2026-09-05 措辭修正）。沒有帳戶
+              （新車行還沒建過）時這個下拉選單只會有「出帳帳戶…」一個
+              選項，不影響核准流程。 */}
+          <select
+            value={accountId}
+            onChange={(e) => setAccountId(e.target.value)}
+            className="rounded-lg border border-neutral-200 bg-white px-2 py-1 text-xs text-neutral-700 outline-none focus:border-[#BFA074]"
+          >
+            <option value="">出帳帳戶…</option>
+            {financialAccounts.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.type === "cash" ? "💵 " : "🏦 "}
+                {a.name}
+              </option>
+            ))}
+          </select>
           <button
             type="button"
             disabled={pending}
@@ -435,7 +628,8 @@ export function RepairItemRow({
           </button>
           <button
             type="button"
-            disabled={pending}
+            disabled={pending || !paymentMethod}
+            title={!paymentMethod ? "請先選擇撥款方式" : undefined}
             onClick={() => decide("approved")}
             className="rounded-lg bg-[#5F7563] px-2.5 py-1 text-xs font-medium text-white transition hover:bg-[#516357] disabled:opacity-50"
           >

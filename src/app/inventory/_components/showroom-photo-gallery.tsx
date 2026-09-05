@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { FadeImage } from "./fade-image";
 
 /**
  * 車輛詳情用的多圖相簿：上方大圖 + 下方縮圖列，大圖右下角有「目前張數/總
@@ -14,6 +15,10 @@ import { useRef, useState } from "react";
  * onOpenLightbox(index)」，實際的全螢幕遮罩由 ShowroomDetailModal 統一
  * 管理（原因見 showroom-lightbox.tsx 開頭的說明：同一時間只能有一層
  * position:fixed 滿版遮罩，不能疊兩層）。
+ *
+ * 配色跟隨黑白灰主色調：淺灰底、黑色縮圖選中框——見 showroom-page.tsx
+ * 開頭「視覺風格」的完整說明，跳色只留給價格跟主要 CTA，這裡的縮圖選中
+ * 狀態不需要用到橘紅色。
  */
 export function ShowroomPhotoGallery({
   photos,
@@ -45,8 +50,8 @@ export function ShowroomPhotoGallery({
 
   if (total === 0) {
     return (
-      <div className="flex aspect-[4/3] w-full items-center justify-center rounded-2xl bg-neutral-100 text-5xl text-neutral-300">
-        🚗
+      <div className="flex aspect-[4/3] w-full items-center justify-center rounded-2xl bg-[#F5F5F5] text-xs tracking-widest text-[#A3A3A3]">
+        尚無照片
       </div>
     );
   }
@@ -54,20 +59,21 @@ export function ShowroomPhotoGallery({
   return (
     <div>
       {/* 大圖 */}
-      <div className="relative overflow-hidden rounded-2xl bg-neutral-100">
+      <div className="relative overflow-hidden rounded-2xl bg-[#F5F5F5]">
         <div
           ref={scrollerRef}
           onScroll={handleScroll}
           className="no-scrollbar flex aspect-[4/3] w-full snap-x snap-mandatory overflow-x-auto scroll-smooth"
         >
           {photos.map((url, i) => (
-            // eslint-disable-next-line @next/next/no-img-element -- 見 showroom-lightbox.tsx 的說明
-            <img
+            <FadeImage
               key={i}
               src={url}
               alt={`${alt} - 第 ${i + 1} 張`}
               onClick={() => onOpenLightbox(i)}
-              className="h-full w-full shrink-0 snap-center cursor-zoom-in object-cover"
+              loading={i === 0 ? "eager" : "lazy"}
+              className="h-full w-full shrink-0 snap-center cursor-zoom-in"
+              imgClassName="object-cover"
             />
           ))}
         </div>
@@ -78,7 +84,7 @@ export function ShowroomPhotoGallery({
               type="button"
               onClick={() => scrollToIndex(activeIndex - 1)}
               aria-label="上一張"
-              className="absolute left-2 top-1/2 -translate-y-1/2 rounded-full bg-white/80 px-2.5 py-2 text-neutral-600 shadow backdrop-blur transition hover:bg-white hover:text-[#A6793D]"
+              className="absolute left-2 top-1/2 -translate-y-1/2 rounded-full border border-[#E5E5E5] bg-white/90 px-2.5 py-2 text-[#404040] shadow backdrop-blur transition-all duration-200 ease-out hover:border-[#BFA074] hover:text-[#171717] hover:shadow-[0_0_0_3px_rgba(191,160,116,0.25)] active:scale-90 active:shadow-[0_0_0_4px_rgba(191,160,116,0.45)]"
             >
               ‹
             </button>
@@ -86,7 +92,7 @@ export function ShowroomPhotoGallery({
               type="button"
               onClick={() => scrollToIndex(activeIndex + 1)}
               aria-label="下一張"
-              className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full bg-white/80 px-2.5 py-2 text-neutral-600 shadow backdrop-blur transition hover:bg-white hover:text-[#A6793D]"
+              className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full border border-[#E5E5E5] bg-white/90 px-2.5 py-2 text-[#404040] shadow backdrop-blur transition-all duration-200 ease-out hover:border-[#BFA074] hover:text-[#171717] hover:shadow-[0_0_0_3px_rgba(191,160,116,0.25)] active:scale-90 active:shadow-[0_0_0_4px_rgba(191,160,116,0.45)]"
             >
               ›
             </button>
@@ -108,12 +114,11 @@ export function ShowroomPhotoGallery({
               onClick={() => scrollToIndex(i)}
               aria-label={`切換到第 ${i + 1} 張照片`}
               className={
-                "aspect-square w-16 shrink-0 overflow-hidden rounded-lg ring-2 transition " +
-                (i === activeIndex ? "ring-[#BFA074]" : "ring-transparent opacity-70 hover:opacity-100")
+                "aspect-square w-16 shrink-0 overflow-hidden rounded-lg ring-2 transition-all duration-200 ease-out active:scale-95 " +
+                (i === activeIndex ? "ring-[#171717]" : "ring-[#E5E5E5] opacity-70 hover:opacity-100")
               }
             >
-              {/* eslint-disable-next-line @next/next/no-img-element -- 見 showroom-lightbox.tsx 的說明 */}
-              <img src={url} alt="" className="h-full w-full object-cover" />
+              <FadeImage src={url} alt="" className="h-full w-full" imgClassName="object-cover" />
             </button>
           ))}
         </div>

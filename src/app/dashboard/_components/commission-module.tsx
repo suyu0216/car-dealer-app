@@ -1,7 +1,7 @@
 "use client";
 
 import type { Car, Deal } from "@/lib/supabase/types";
-import { formatCurrency } from "@/lib/format";
+import { formatCurrency, formatDate } from "@/lib/format";
 
 /**
  * 業務薪資模組：管理員看得到「全部業務」的成交與抽成明細；一般業務只看
@@ -103,7 +103,7 @@ export function CommissionModule({
                     {deal.commission_amount != null ? formatCurrency(deal.commission_amount) : "—"}
                   </td>
                   <td className="px-4 py-2 text-neutral-500">
-                    {new Date(deal.created_at).toLocaleDateString("zh-TW")}
+                    {formatDate(deal.created_at)}
                   </td>
                 </tr>
               );

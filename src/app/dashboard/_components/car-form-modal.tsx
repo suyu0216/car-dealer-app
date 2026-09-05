@@ -3,7 +3,9 @@
 import { useActionState, useEffect, useState } from "react";
 import { createCar, updateCar, type CarFormState } from "../cars-actions";
 import { useUnsavedChangesGuard } from "./use-unsaved-changes-guard";
-import type { Car, CarStatus, PaymentMethod, TransferStatus } from "@/lib/supabase/types";
+import { useMultiImageCompressOnChange } from "./use-image-compress-on-change";
+import { VALID_BODY_TYPES } from "@/lib/supabase/types";
+import type { Car, CarStatus, FinancialAccount, PaymentMethod, TransferStatus } from "@/lib/supabase/types";
 
 const STATUS_OPTIONS: { value: CarStatus; label: string }[] = [
   { value: "preparing", label: "整備中" },
@@ -48,6 +50,9 @@ export function CarFormModal({
   mode,
   car,
   canViewCost,
+  canViewFinalCost,
+  staff,
+  financialAccounts,
   onClose,
 }: {
   mode: "create" | "edit";
@@ -61,6 +66,20 @@ export function CarFormModal({
    */
   canViewCost: boolean;
   /**
+   * 2026-08-31 新增：可以檢視/填寫「最終成本價格」——比 canViewCost 更
+   * 嚴格，預設只有會計/老闆看得到（見 permissions.ts 的 canViewFinalCost
+   * 說明）。這個欄位獨立於 canViewCost 之外：即使某人有 canViewCost（例如
+   * 預設看得到成本的店長），沒有 canViewFinalCost 一樣看不到、填不到這欄。
+   */
+  canViewFinalCost: boolean;
+  /** 「採購業務」下拉選單用——同車行的員工清單。 */
+  staff: { id: string; name: string | null }[];
+  /** 2026-09-04 新增：進貨付款選帳戶用，見下面「付款方式」旁邊的
+   * 「出帳帳戶」下拉選單——進貨付款是錢從帳戶付出去，跟合約收款（錢
+   * 收進帳戶）方向相反，所以這裡標「出帳」而不是「入帳」，見
+   * 2026-09-05 安安反映的措辭修正。 */
+  financialAccounts: FinancialAccount[];
+  /**
    * 存檔成功時呼叫；如果車輛本身存成功、但照片上傳失敗，會帶一句
    * warning 訊息上去，讓外層（CarsManager）用 Toast 顯示——不能因為
    * Modal 關閉了就讓這個警告完全消失、使用者永遠不知道照片沒傳成功。
@@ -69,7 +88,25 @@ export function CarFormModal({
 }) {
   const action = mode === "create" ? createCar : updateCar;
   const [state, formAction, pending] = useActionState(action, initialState);
+  // 2026-08-31：安安要求「車輛照片」能一次選多張上傳——改用多檔版本的
+  // 壓縮 hook（見 use-image-compress-on-change.ts），selectedPhotoNames
+  // 純粹給畫面上「已選 N 張：a.jpg、b.jpg」這種即時清單用，不影響實際
+  // 送出的檔案內容（那個由 input 本身的 FormData 帶出去）。
+  const [selectedPhotoNames, setSelectedPhotoNames] = useState<string[]>([]);
+  const { onChange: onPhotosChange, compressing: photoCompressing } = useMultiImageCompressOnChange((files) =>
+    setSelectedPhotoNames(files.map((f) => f.name))
+  );
   const { markDirty, requestClose } = useUnsavedChangesGuard(() => onClose());
+
+  // 2026-08-31 新增：安安要求「新增車輛入庫」時，里程/年份/顏色/排氣量/
+  // 車牌號碼/照片/開價/車型分類這幾項一定要填，不然不給新增——但只限
+  // 「新增」當下，不回頭要求既有車輛的編輯也要補齊（避免舊資料缺這些
+  // 欄位的車，之後想改個別的欄位卻被卡住存不了檔）。「底價」刻意不在
+  // 這個必填清單裡：底價屬於成本類敏感資訊，預設員工看不到、也填不到
+  // 這個欄位（見 canViewCost），員工正是負責新增車輛入庫的人，勉強列
+  // 為必填員工也做不到；改成新增時如果沒有底價，自動發一則通知提醒
+  // 會計/老闆回頭補填（見 cars-actions.ts 的 createCar()）。
+  const requireOnCreate = mode === "create";
 
   // 新增/更新成功後自動關閉彈窗；cars-actions.ts 已經呼叫
   // revalidatePath("/dashboard")，所以關閉當下背後的表格資料已經是最新的，
@@ -135,10 +172,31 @@ export function CarFormModal({
             </datalist>
 
             <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <Field label="出廠年份" name="year" type="number" defaultValue={car?.year?.toString() ?? ""} placeholder="2022" />
+              <Field
+                label={requireOnCreate ? "出廠年份 *" : "出廠年份"}
+                name="year"
+                type="number"
+                defaultValue={car?.year?.toString() ?? ""}
+                placeholder="2022"
+                required={requireOnCreate}
+              />
               <Field label="領牌年份" name="license_year" type="number" defaultValue={car?.license_year?.toString() ?? ""} placeholder="2022" />
-              <Field label="里程數 (km)" name="mileage" type="number" defaultValue={car?.mileage?.toString() ?? ""} placeholder="18500" />
-              <Field label="排氣量 (cc)" name="engine_cc" type="number" defaultValue={car?.engine_cc?.toString() ?? ""} placeholder="1998" />
+              <Field
+                label={requireOnCreate ? "里程數 (km) *" : "里程數 (km)"}
+                name="mileage"
+                type="number"
+                defaultValue={car?.mileage?.toString() ?? ""}
+                placeholder="18500"
+                required={requireOnCreate}
+              />
+              <Field
+                label={requireOnCreate ? "排氣量 (cc) *" : "排氣量 (cc)"}
+                name="engine_cc"
+                type="number"
+                defaultValue={car?.engine_cc?.toString() ?? ""}
+                placeholder="1998"
+                required={requireOnCreate}
+              />
             </div>
 
             <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
@@ -149,8 +207,20 @@ export function CarFormModal({
                 list="transmission-options"
                 placeholder="選擇或自行輸入"
               />
-              <Field label="車色" name="color" defaultValue={car?.color ?? ""} placeholder="白色" />
-              <Field label="車牌號碼" name="license_plate" defaultValue={car?.license_plate ?? ""} placeholder="ABC-1234" />
+              <Field
+                label={requireOnCreate ? "車色 *" : "車色"}
+                name="color"
+                defaultValue={car?.color ?? ""}
+                placeholder="白色"
+                required={requireOnCreate}
+              />
+              <Field
+                label={requireOnCreate ? "車牌號碼 *" : "車牌號碼"}
+                name="license_plate"
+                defaultValue={car?.license_plate ?? ""}
+                placeholder="ABC-1234"
+                required={requireOnCreate}
+              />
             </div>
             <datalist id="transmission-options">
               {TRANSMISSION_OPTIONS.map((t) => (
@@ -163,16 +233,35 @@ export function CarFormModal({
             </div>
 
             <div className="mt-3">
-              <label className="block text-sm font-medium text-neutral-700">車輛照片</label>
+              <label className="block text-sm font-medium text-neutral-700">
+                {requireOnCreate ? "車輛照片（可一次選多張）*" : "車輛照片（可一次選多張）"}
+              </label>
+              {/* 2026-08-31：安安要求能一次選多張照片上傳——加上 multiple，
+                  name 也跟著改成複數的 "photos"（FormData.getAll 用），
+                  第一張會變成主圖（cars.image_url，全站目前只認這一欄的
+                  地方都吃得到），其餘依選擇順序加進車輛相簿（car_photos），
+                  見 cars-actions.ts 的說明。 */}
               <input
                 type="file"
-                name="photo"
+                name="photos"
                 accept="image/*"
+                multiple
+                onChange={onPhotosChange}
+                required={requireOnCreate}
                 className="mt-1 block w-full text-sm text-neutral-600 file:mr-3 file:rounded-lg file:border-0 file:bg-[#BFA074] file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-white hover:file:bg-[#AD9066]"
               />
+              {photoCompressing && (
+                <p className="mt-1 text-xs text-neutral-400">圖片壓縮中…</p>
+              )}
+              {!photoCompressing && selectedPhotoNames.length > 0 && (
+                <p className="mt-1 text-xs text-neutral-500">
+                  已選 {selectedPhotoNames.length} 張：{selectedPhotoNames.join("、")}
+                  {selectedPhotoNames.length > 1 && "（第一張是主圖，其餘加進車輛相簿）"}
+                </p>
+              )}
               {car?.image_url && (
                 <p className="mt-1 text-xs text-neutral-400">
-                  已有照片，重新選擇檔案即可更換；不選則維持原照片。
+                  已有照片，重新選擇檔案即可新增／更換；不選則維持原照片。
                 </p>
               )}
             </div>
@@ -217,24 +306,66 @@ export function CarFormModal({
             </div>
           </FormSection>
 
-          {/* 展示開價：業務日常要跟客戶報價用，不算敏感成本資訊，一律顯示。 */}
-          <FormSection title="展示開價（新台幣 NT$）">
+          {/* 定價：把「展示開價／預計底價／最終成交價」這三個都是『賣多少
+              錢』概念的欄位統整放在同一個區塊——原本最終成交價被放在下面
+              「成本與底價」區塊裡，跟收購進價/過戶費/整理美容/整備維修這些
+              『花了多少錢』的成本欄位混在一起，上架填表單時容易搞混、也不
+              好找。展示開價本身不算敏感成本資訊，一律顯示、任何有編輯權限
+              的人都能填；預計底價／最終成交價才是敏感財務數字，一樣只有
+              canViewCost 才看得到、填得到，邏輯跟原本完全一樣，只是移到
+              同一個「定價」區塊裡跟展示開價放在一起，不是分成兩個地方。 */}
+          <FormSection title="定價（新台幣 NT$）">
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
               <Field
-                label="展示開價"
+                label={requireOnCreate ? "展示開價 *" : "展示開價"}
                 name="selling_price"
                 type="number"
                 defaultValue={car?.selling_price != null ? String(car.selling_price) : ""}
+                required={requireOnCreate}
               />
+              {canViewCost ? (
+                <>
+                  <Field
+                    label="預計底價"
+                    name="floor_price"
+                    type="number"
+                    defaultValue={car?.floor_price != null ? String(car.floor_price) : ""}
+                  />
+                  <Field
+                    label="最終成交價"
+                    name="final_price"
+                    type="number"
+                    defaultValue={car?.final_price != null ? String(car.final_price) : ""}
+                  />
+                </>
+              ) : (
+                <>
+                  <input type="hidden" name="floor_price" value={car?.floor_price ?? ""} />
+                  <input type="hidden" name="final_price" value={car?.final_price ?? ""} />
+                </>
+              )}
             </div>
+            {!canViewCost && (
+              <p className="mt-2 text-xs text-neutral-400">
+                🔒 預計底價／最終成交價屬於敏感財務資訊，沒有檢視權限
+              </p>
+            )}
           </FormSection>
 
-          {/* 成本與底價：敏感財務資訊，沒有 canViewCost 權限就整區隱藏、
-              改用隱藏欄位把既有值原封不動送回去（新增模式沒有既有值可以
-              保留，purchase_price 用 0 當預設，等有權限的人再回頭補上）。 */}
+          {/* 成本：純粹是「花了多少錢」的支出欄位，敏感財務資訊，沒有
+              canViewCost 權限就整區隱藏、改用隱藏欄位把既有值原封不動送
+              回去（新增模式沒有既有值可以保留，purchase_price 用 0 當
+              預設，等有權限的人再回頭補上）。
+              「整備維修成本」「整理美容成本」都不再是這裡手動填的欄位——
+              這兩個數字現在改成從「維修請款與會計」分頁的請款紀錄依類別
+              自動加總（見 car-detail-modal.tsx），新增請款時選哪台車、
+              選哪個類別，對應車輛的成本就會自動更新，不用兩邊分別維護、
+              也不會兜不起來。repair_cost / detailing_cost 這兩個舊欄位
+              還在資料庫裡（保留既有資料，不主動清空），但表單不再讓人
+              編輯，避免使用者以為填這裡有用。 */}
           {canViewCost ? (
-            <FormSection title="成本與底價（新台幣 NT$）">
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <FormSection title="成本（新台幣 NT$）">
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 <Field
                   label="收購進價"
                   name="purchase_price"
@@ -242,47 +373,133 @@ export function CarFormModal({
                   defaultValue={car?.purchase_price != null ? String(car.purchase_price) : "0"}
                   required
                 />
-                <Field label="過戶費/規費" name="transfer_fee" type="number" defaultValue={car?.transfer_fee != null ? String(car.transfer_fee) : ""} />
-                <Field label="整理美容成本" name="detailing_cost" type="number" defaultValue={car?.detailing_cost != null ? String(car.detailing_cost) : ""} />
-                <Field label="整備維修成本" name="repair_cost" type="number" defaultValue={car?.repair_cost != null ? String(car.repair_cost) : ""} />
-                <Field label="預計底價" name="floor_price" type="number" defaultValue={car?.floor_price != null ? String(car.floor_price) : ""} />
-                <Field label="最終成交價" name="final_price" type="number" defaultValue={car?.final_price != null ? String(car.final_price) : ""} />
-              </div>
-            </FormSection>
-          ) : (
-            <>
-              <p className="text-xs text-neutral-400">🔒 成本與底價屬於敏感財務資訊，沒有檢視權限</p>
-              <input type="hidden" name="purchase_price" value={car?.purchase_price ?? 0} />
-              <input type="hidden" name="transfer_fee" value={car?.transfer_fee ?? ""} />
-              <input type="hidden" name="detailing_cost" value={car?.detailing_cost ?? ""} />
-              <input type="hidden" name="repair_cost" value={car?.repair_cost ?? ""} />
-              <input type="hidden" name="floor_price" value={car?.floor_price ?? ""} />
-              <input type="hidden" name="final_price" value={car?.final_price ?? ""} />
-            </>
-          )}
-
-          {/* 進貨付款追蹤：跟成本一樣算敏感財務資訊，同一套 canViewCost
-              權限控管，理由跟做法都跟上面「成本與底價」區塊一致。 */}
-          {canViewCost ? (
-            <Accordion title="進貨付款追蹤" defaultOpen={!!car?.paid_amount || !!car?.payment_method}>
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                <Field
-                  label="已付金額"
-                  name="paid_amount"
-                  type="number"
-                  defaultValue={car?.paid_amount != null ? String(car.paid_amount) : ""}
-                />
+                {/* 2026-08-31 新增：付款方式從下面「進貨付款追蹤」折疊區塊
+                    移到這裡、緊貼著收購進價，並改成必填——安安反映「進貨
+                    的錢沒有真的從水池扣掉」，查下來是因為原本水池讀的是
+                    「已付金額」這個獨立、預設收起來、很容易忘記填的欄位，
+                    跟這裡的收購進價各填各的，沒人記得同時去補「已付金額」，
+                    水池就看不到這筆流出。現在改成「資金總覽」直接用收購
+                    進價當作進貨付款金額（見 cash-pool.ts），這裡把付款方式
+                    移上來變必填，兩者綁在同一個地方一起填，不會再各自
+                    分開、漏掉其中一個。「已付金額」欄位本身移除，改成
+                    隱藏欄位保留舊資料（見下面 Accordion 之後的說明）。 */}
                 <div>
-                  <label className="block text-sm font-medium text-neutral-700">付款方式</label>
+                  <label className="block text-sm font-medium text-neutral-700">付款方式 *</label>
                   <select
                     name="payment_method"
                     defaultValue={car?.payment_method ?? ""}
+                    required
                     className={INPUT_CLASS + " mt-1"}
                   >
-                    <option value="">未指定</option>
+                    <option value="" disabled>
+                      請選擇
+                    </option>
                     {PAYMENT_METHOD_OPTIONS.map((opt) => (
                       <option key={opt.value} value={opt.value}>
                         {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {/* 2026-09-04 新增：選填，這筆進貨付款是從哪個金流帳戶付
+                    出去的（新版多帳戶架構）——跟上面「付款方式」現金/匯款
+                    分類並存，不是取代關係。 */}
+                <div>
+                  <label className="block text-sm font-medium text-neutral-700">出帳帳戶</label>
+                  <select
+                    name="purchase_account_id"
+                    defaultValue={car?.purchase_account_id ?? ""}
+                    className={INPUT_CLASS + " mt-1"}
+                  >
+                    <option value="">尚未指定</option>
+                    {financialAccounts.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.type === "cash" ? "💵 " : "🏦 "}
+                        {a.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <Field label="過戶費/規費" name="transfer_fee" type="number" defaultValue={car?.transfer_fee != null ? String(car.transfer_fee) : ""} />
+                <Field
+                  label="稅金/發票稅金"
+                  name="tax_amount"
+                  type="number"
+                  defaultValue={car?.tax_amount != null ? String(car.tax_amount) : ""}
+                  placeholder="每台車稅率不同，請自行填實際金額"
+                />
+              </div>
+              <p className="mt-2 text-xs text-neutral-400">
+                「付款方式」決定這筆收購進價要從「資金總覽」的現金池還是銀行池扣款，請務必據實選擇，才能讓水池餘額跟實際狀況對得上。
+              </p>
+              {/* 2026-08-31 新增：「最終成本價格」——只有 canViewFinalCost
+                  （預設會計/老闆）才會渲染這個欄位，即使有 canViewCost 的
+                  店長/員工也看不到、填不到。這裡刻意不放隱藏欄位保留原值
+                  ——因為沒有 canViewFinalCost 的人，car prop 送到瀏覽器前
+                  就已經被伺服器清成 null（見 page.tsx），根本沒有真值可以
+                  「原封不動送回去」；cars-actions.ts 也只在 canViewFinalCost
+                  為真時才會把這個欄位放進 insert/update payload，其餘情況
+                  完全不會動到資料庫裡原本的值，不用擔心被表單清空。 */}
+              {canViewFinalCost && (
+                <div className="mt-3 border-t border-dashed border-neutral-200 pt-3">
+                  <Field
+                    label="最終成本價格（僅會計/老闆可見）"
+                    name="final_cost_price"
+                    type="number"
+                    defaultValue={car?.final_cost_price != null ? String(car.final_cost_price) : ""}
+                  />
+                  <p className="mt-1 text-xs text-neutral-400">
+                    🔒 真實的最終成本，只有這個角色看得到——「收購進價」是給其他人看的參考金額，兩者互相獨立，不會互相覆蓋。
+                  </p>
+                </div>
+              )}
+              <p className="mt-2 text-xs text-neutral-400">
+                整備維修成本／整理美容成本改到車輛詳情頁的「維修請款與會計」分頁新增請款（選對類別），會自動加總更新，這裡不用手動填。稅金因車輛/牌照類型而異，系統不自動計算，請自行填寫實際金額。
+              </p>
+              <input type="hidden" name="repair_cost" value={car?.repair_cost ?? ""} />
+              <input type="hidden" name="detailing_cost" value={car?.detailing_cost ?? ""} />
+            </FormSection>
+          ) : (
+            <>
+              <p className="text-xs text-neutral-400">🔒 成本屬於敏感財務資訊，沒有檢視權限</p>
+              <input type="hidden" name="purchase_price" value={car?.purchase_price ?? 0} />
+              {/* 付款方式現在跟收購進價放在同一個 canViewCost 區塊裡（見
+                  上面的說明），沒有 canViewCost 的人一樣要用隱藏欄位把
+                  原值原封不動送回去，不會因為編輯其他欄位就把付款方式
+                  清空，進而讓水池少算一筆進貨支出。 */}
+              <input type="hidden" name="payment_method" value={car?.payment_method ?? ""} />
+              <input type="hidden" name="purchase_account_id" value={car?.purchase_account_id ?? ""} />
+              <input type="hidden" name="transfer_fee" value={car?.transfer_fee ?? ""} />
+              <input type="hidden" name="tax_amount" value={car?.tax_amount ?? ""} />
+              <input type="hidden" name="detailing_cost" value={car?.detailing_cost ?? ""} />
+              <input type="hidden" name="repair_cost" value={car?.repair_cost ?? ""} />
+            </>
+          )}
+
+          {/* 採購業務與備註：跟成本一樣算敏感財務資訊，同一套 canViewCost
+              權限控管。
+              2026-08-31 調整：這個折疊區塊原本還有「已付金額」「付款
+              方式」兩個欄位——「付款方式」已經移到上面「成本」區塊跟
+              收購進價放一起、變成必填（見上面的說明）；「已付金額」
+              整個移除不再讓人填，因為安安反映的水池對不起來問題，根源
+              就是這個獨立、容易忘記填的欄位跟真正拿去算成本的收購進價
+              各填各的——現在水池直接用收購進價計算，這個欄位留著只會
+              製造混淆，改成隱藏欄位保留舊資料就好，不再開放編輯。 */}
+          {canViewCost ? (
+            <Accordion title="採購業務與備註" defaultOpen={!!car?.purchased_by || !!car?.payment_note}>
+              <input type="hidden" name="paid_amount" value={car?.paid_amount ?? ""} />
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                <div>
+                  <label className="block text-sm font-medium text-neutral-700">採購業務</label>
+                  <select
+                    name="purchased_by"
+                    defaultValue={car?.purchased_by ?? ""}
+                    className={INPUT_CLASS + " mt-1"}
+                  >
+                    <option value="">未指定</option>
+                    {staff.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name ?? "未命名"}
                       </option>
                     ))}
                   </select>
@@ -300,9 +517,12 @@ export function CarFormModal({
             </Accordion>
           ) : (
             <>
+              {/* payment_method 的隱藏欄位在上面「成本」區塊的 !canViewCost
+                  分支已經有一份，這裡不用重複放，避免同一個 <form> 裡出現
+                  兩個同名欄位。 */}
               <input type="hidden" name="paid_amount" value={car?.paid_amount ?? ""} />
-              <input type="hidden" name="payment_method" value={car?.payment_method ?? ""} />
               <input type="hidden" name="payment_note" value={car?.payment_note ?? ""} />
+              <input type="hidden" name="purchased_by" value={car?.purchased_by ?? ""} />
             </>
           )}
 
@@ -348,6 +568,26 @@ export function CarFormModal({
               </div>
               <Field label="預約認證日期" name="inspection_date" type="date" defaultValue={car?.inspection_date ?? ""} />
               <Field label="認證狀態/結果" name="inspection_status" defaultValue={car?.inspection_status ?? ""} />
+            </div>
+            {/* 2026-09-04 新增：車籍現在是不是已經在公司名下，要能自己
+                手動設定——剛入庫的車車籍基本上不會馬上過戶到公司名下，
+                之前是沒有二胎/人頭紀錄就一律顯示綠色「車籍在公司」，
+                對剛入庫、還在辦過戶的車輛來說不正確。新增車輛預設不勾
+                （car 是 undefined），編輯既有車輛則照資料庫現值顯示。
+                跟下面「二胎／人頭車」的自動推算邏輯是各自獨立的兩件事：
+                如果那邊判斷「目前登記在二胎/人頭名下」，車籍徽章一律
+                優先顯示紅色警示，不管這裡勾選與否（見
+                car-title-badge.tsx）。 */}
+            <div className="mt-3 flex items-end pb-2">
+              <label className="flex items-center gap-2 text-sm text-neutral-700">
+                <input
+                  type="checkbox"
+                  name="title_at_company"
+                  defaultChecked={car?.title_at_company ?? false}
+                  className="h-4 w-4 rounded border-neutral-300 text-[#BFA074] focus:ring-[#BFA074]"
+                />
+                車籍（行照）目前已在公司名下
+              </label>
             </div>
           </Accordion>
 
@@ -437,6 +677,37 @@ export function CarFormModal({
                 ))}
               </select>
             </div>
+            <div>
+              {/* 車型分類——給前台展間頁上方的分類選單用（小型車/房車/休旅車/
+                  跑車/商用車）。2026-08-31 起新增車輛時一定要選一個分類，
+                  「未分類」選項改成 disabled（只在編輯既有的未分類車輛時
+                  當作目前值顯示，不能在新增時被選中）；編輯既有車輛則
+                  維持原本可以留白/選未分類的彈性，不回頭強制補選。沒選
+                  分類的車輛，展間分類選單裡不會出現，但車輛本身還是照常
+                  顯示在「全部車輛」。 */}
+              <label
+                htmlFor="body_type"
+                className="block text-sm font-medium text-neutral-700"
+              >
+                {requireOnCreate ? "車型分類 *" : "車型分類"}
+              </label>
+              <select
+                id="body_type"
+                name="body_type"
+                defaultValue={car?.body_type ?? ""}
+                required={requireOnCreate}
+                className={INPUT_CLASS + " mt-1"}
+              >
+                <option value="" disabled={requireOnCreate}>
+                  未分類
+                </option>
+                {VALID_BODY_TYPES.map((type) => (
+                  <option key={type} value={type}>
+                    {type}
+                  </option>
+                ))}
+              </select>
+            </div>
             <div className="flex items-end pb-2">
               <label className="flex items-center gap-2 text-sm text-neutral-700">
                 <input
@@ -446,6 +717,39 @@ export function CarFormModal({
                   className="h-4 w-4 rounded border-neutral-300 text-[#BFA074] focus:ring-[#BFA074]"
                 />
                 於前台看車頁公開顯示
+              </label>
+            </div>
+            <div className="flex items-end pb-2">
+              {/* 熱門推薦——後台手動開關，是不是「熱門款」由車行自己判斷、
+                  自己決定，不是系統自動算出來的，見 cars-actions.ts 對
+                  VALID_BODY_TYPES 附近的說明。 */}
+              <label className="flex items-center gap-2 text-sm text-neutral-700">
+                <input
+                  type="checkbox"
+                  name="is_featured"
+                  defaultChecked={car?.is_featured ?? false}
+                  className="h-4 w-4 rounded border-neutral-300 text-[#BFA074] focus:ring-[#BFA074]"
+                />
+                設為熱門推薦（於展間頁「熱門款」分類顯示）
+              </label>
+            </div>
+            <div className="flex items-end pb-2">
+              {/* 大圖卡——2026-08 新增，使用者明確要求「現有車輛」頁哪些
+                  車要用大圖廣告卡、哪些用小圖，要能自己設定，不要系統
+                  自動判斷（原本是自動挑排序第一台放大）。跟上面「熱門
+                  推薦」是各自獨立的開關，互不影響，可以同時勾選、也可以
+                  只勾其中一個。勾了這個的車輛，會在「現有車輛」頁車輛
+                  清單裡用大圖卡呈現；如果同時是這個車行第一台被勾選的
+                  車，也會顯示在頁面最上面的「焦點車款」大圖，見
+                  showroom-cars-section.tsx 的說明。 */}
+              <label className="flex items-center gap-2 text-sm text-neutral-700">
+                <input
+                  type="checkbox"
+                  name="is_large_card"
+                  defaultChecked={car?.is_large_card ?? false}
+                  className="h-4 w-4 rounded border-neutral-300 text-[#BFA074] focus:ring-[#BFA074]"
+                />
+                設為大圖卡（於「現有車輛」頁以大圖廣告卡呈現）
               </label>
             </div>
           </div>
@@ -466,10 +770,10 @@ export function CarFormModal({
             </button>
             <button
               type="submit"
-              disabled={pending}
+              disabled={pending || photoCompressing}
               className="rounded-lg bg-[#BFA074] px-3 py-1.5 text-sm font-medium text-white transition hover:bg-[#AD9066] disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {pending ? "儲存中…" : "儲存"}
+              {pending ? "儲存中…" : photoCompressing ? "圖片處理中…" : "儲存"}
             </button>
           </div>
         </form>

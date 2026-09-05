@@ -908,6 +908,136 @@ create trigger on_auth_user_created
   for each row execute function public.handle_new_user();
 
 -- =============================================================================
+-- 「資金總覽」現金流水池：期初餘額 + 起算日 + 收款/記帳的現金銀行歸類
+-- =============================================================================
+-- 見 src/lib/cash-pool.ts 的完整說明。水池不是從系統一開始就有的完整
+-- 歷史流水帳，需要車行管理員手動設定一個起算點（起算日當下的現金／銀行
+-- 餘額），之後只加總起算日（含）之後發生的成交收款／進貨付款／公司
+-- 開銷／手動記帳。純增量、不影響任何既有欄位或既有資料列。
+alter table public.tenants add column if not exists cash_opening_balance numeric(12, 2);
+alter table public.tenants add column if not exists bank_opening_balance numeric(12, 2);
+alter table public.tenants add column if not exists cash_pool_started_at date;
+
+comment on column public.tenants.cash_opening_balance is '資金總覽水池：設定起算點當下的現金餘額。';
+comment on column public.tenants.bank_opening_balance is '資金總覽水池：設定起算點當下的銀行餘額。';
+comment on column public.tenants.cash_pool_started_at is '資金總覽水池：起算日期，只有這天（含）之後的成交收款／開銷／進貨付款／手動紀錄才會計入水池增減。';
+
+-- deals：訂金＋尾款這筆合約收到的錢，客人是付現金還是匯款，才能正確
+-- 歸類進現金水池還是銀行水池。合約新增當下可能還沒收到錢（草約），
+-- 所以允許 NULL，不強制填。
+alter table public.deals add column if not exists payment_method text
+  check (payment_method is null or payment_method in ('cash', 'bank'));
+
+comment on column public.deals.payment_method is '客戶收款方式（訂金＋尾款合計）：cash=現金 / bank=匯款，NULL=尚未記錄。給資金總覽水池分類用。';
+
+-- transactions（本來就有、但完全沒被用到的收支記帳表）：補上付款方式，
+-- 拿來記錄「不屬於成交收款／公司開銷／進貨付款」的其他現金異動
+-- （例如老闆存入/提領、銀行利息、轉帳手續費）。
+alter table public.transactions add column if not exists payment_method text
+  check (payment_method is null or payment_method in ('cash', 'bank'));
+
+comment on column public.transactions.payment_method is '這筆手動記帳的現金異動：cash=現金 / bank=銀行。給資金總覽水池分類用。';
+
+-- =============================================================================
+-- 前台看車頁 Google 評論信任徽章 + 精選評論小卡
+-- =============================================================================
+-- 不是即時串接 Google Places API 自動抓評論——那個方案每千次查詢要價
+-- 25 美元、每月僅 1000 次免費額度，而且官方規定不能長期快取評論內容，
+-- 對多租戶 SaaS 來說成本跟維護負擔都偏高。改成車行自己在後台「品牌設定」
+-- 分頁手動填寫整體星等／評論則數／評論頁連結，外加手動複製貼上幾則真實
+-- 評論當精選小卡，完全免費、零維護風險。見 brand-settings-module.tsx、
+-- tenant-reviews-module.tsx、showroom-home-section.tsx。
+alter table public.tenants add column if not exists google_rating numeric(2, 1)
+  check (google_rating is null or (google_rating >= 0 and google_rating <= 5));
+alter table public.tenants add column if not exists google_review_count integer
+  check (google_review_count is null or google_review_count >= 0);
+alter table public.tenants add column if not exists google_review_url text;
+
+comment on column public.tenants.google_rating is '前台看車頁信任徽章：Google 商家整體星等（0-5，可小數），車行手動填寫/更新。';
+comment on column public.tenants.google_review_count is '前台看車頁信任徽章：Google 評論則數，車行手動填寫/更新。';
+comment on column public.tenants.google_review_url is '前台看車頁信任徽章「查看更多評論」按鈕連結，通常是車行的 Google 地圖評論頁網址。';
+
+create table if not exists public.tenant_reviews (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references public.tenants(id) on delete cascade,
+  author_name text not null,
+  rating smallint not null default 5 check (rating between 1 and 5),
+  review_text text not null,
+  sort_order integer not null default 0,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists tenant_reviews_tenant_id_idx on public.tenant_reviews (tenant_id, sort_order);
+
+comment on table public.tenant_reviews is '車行自己手動挑選、貼上的 Google 評論精選小卡（顧客真實評論的原文轉貼），顯示在前台看車頁（/inventory）的「顧客怎麼說」區塊，不是即時串接 Google API 抓的。';
+comment on column public.tenant_reviews.author_name is '評論者顯示名稱（車行手動輸入，通常照抄 Google 評論上的名字）。';
+comment on column public.tenant_reviews.rating is '這則評論的星等，1-5。';
+comment on column public.tenant_reviews.review_text is '評論內文（車行手動複製貼上）。';
+comment on column public.tenant_reviews.sort_order is '顯示順序，數字小的排前面。';
+
+alter table public.tenant_reviews enable row level security;
+
+drop policy if exists "tenant_reviews_super_admin_all" on public.tenant_reviews;
+create policy "tenant_reviews_super_admin_all"
+  on public.tenant_reviews for all
+  using (public.is_super_admin())
+  with check (public.is_super_admin());
+
+-- 跟 cars_tenant_scoped 同一個模式：RLS 只把關「租戶邊界」，同車行的
+-- tenant_admin/staff 都能透過這條 policy 讀寫；「只有 tenant_admin 能寫」
+-- 這層更細的權限，交給 Server Action 那層檢查（見
+-- tenant-reviews-actions.ts），不是每個功能都要在 RLS 分兩條角色 policy。
+drop policy if exists "tenant_reviews_tenant_scoped" on public.tenant_reviews;
+create policy "tenant_reviews_tenant_scoped"
+  on public.tenant_reviews for all
+  using (tenant_id = public.current_tenant_id())
+  with check (tenant_id = public.current_tenant_id());
+
+-- 公開看車頁（/inventory）：未登入訪客也要看得到精選評論——跟
+-- car_photos_public_showroom_read 同一個道理，用子查詢確認這則評論所屬
+-- 的車行是 status = 'active'（通過平台審核、未停權）才給看。
+drop policy if exists "tenant_reviews_public_read" on public.tenant_reviews;
+create policy "tenant_reviews_public_read"
+  on public.tenant_reviews for select
+  to anon, authenticated
+  using (
+    exists (
+      select 1 from public.tenants t
+      where t.id = tenant_reviews.tenant_id and t.status = 'active'
+    )
+  );
+
+-- 2026-08 修復：RLS policy 生效的前提是「資料表本身的 Postgres GRANT
+-- 先允許這個角色做這個操作」，兩者缺一不可——policy 只負責篩選「哪些
+-- 列」，GRANT 才是「這個角色能不能對這張表做這個動作」的第一道門檻，
+-- 沒有 GRANT 的話會直接卡在「permission denied for table」，連 RLS
+-- policy 都還沒機會判斷。這個專案裡其他表都是透過 Supabase 後台介面
+-- 建立，介面會自動補這一步；tenant_reviews（跟很早之前建立的
+-- company_expenses）是直接下 SQL migration 建表，SQL 建表本身不會自動
+-- 補 GRANT，這裡補回來——之後如果再用 SQL migration（而不是後台介面）
+-- 建新表，記得比照這裡，順手把 GRANT 一起補上，不要只寫 RLS policy。
+grant select, insert, update, delete on public.company_expenses to authenticated;
+grant select, insert, update, delete on public.tenant_reviews to authenticated;
+grant select on public.tenant_reviews to anon;
+
+-- 2026-08 找到上面這個問題的根本原因、順手修掉，避免以後每次都要重演一次
+-- 「新表 → 漏 GRANT → permission denied → 事後補」：這個資料庫裡，用
+-- Supabase 後台介面建立的表歸 supabase_admin 角色所有，這個角色的預設
+-- 權限（default privileges）本來就會自動把 select/insert/update/delete
+-- 發給 anon/authenticated；但用 SQL migration（實際上是用 postgres 這個
+-- 角色執行）建的表，postgres 角色的預設權限只給
+-- truncate/references/trigger/maintain 這幾個「結構類」權限，不含真正
+-- 讀寫用的 select/insert/update/delete——這是整個資料庫的既有設定差異，
+-- company_expenses／tenant_reviews 只是先踩到的兩個，不修的話，之後任何
+-- 一張用 SQL migration 建的新表都會重演同一個 bug。這裡把 postgres 角色
+-- 的預設權限對齊 supabase_admin，一次修掉、以後新表自動繼承正確權限，
+-- 不用再靠人記得每次手動補 GRANT。跟這個專案裡其他表現有的作法一致：
+-- GRANT 開得比較寬，真正「哪些列能被哪些人讀寫」的邊界交給每張表各自的
+-- RLS policy 把關，不是靠 GRANT 本身限制列的範圍。
+alter default privileges for role postgres in schema public
+  grant select, insert, update, delete on tables to anon, authenticated;
+
+-- =============================================================================
 -- 手動建立第一位 super_admin（範例）
 -- =============================================================================
 -- 車行老闆（tenant_admin）跟自己的車行（tenants）現在會在 /login 註冊時

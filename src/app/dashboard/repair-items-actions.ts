@@ -2,9 +2,19 @@
 
 import { revalidatePath } from "next/cache";
 import { requireTenantUser } from "@/lib/supabase/dal";
+import { getEffectivePermissions } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
 import { uploadReceiptFile } from "@/lib/supabase/storage";
-import type { RepairItemStatus } from "@/lib/supabase/types";
+import { createNotification } from "@/lib/supabase/notifications";
+import { formatCurrency } from "@/lib/format";
+// 類別清單改從這個普通模組匯入，不能自己在這個 "use server" 檔案裡
+// export const 陣列——那樣 Client Component import 進去會壞掉（陣列會
+// 變成一個 Server Action 參照，不是真的陣列），見
+// src/lib/repair-item-constants.ts 開頭的說明。
+import { REPAIR_ITEM_CATEGORIES } from "@/lib/repair-item-constants";
+import type { CashPoolMethod, RepairItemCategory, RepairItemStatus } from "@/lib/supabase/types";
+
+const VALID_CASH_POOL_METHODS: readonly CashPoolMethod[] = ["cash", "bank"];
 
 export interface RepairItemFormState {
   error?: string;
@@ -29,6 +39,9 @@ export async function createRepairItem(
   const handlerName = String(formData.get("handler_name") ?? "").trim();
   const receiptNumber = String(formData.get("receipt_number") ?? "").trim();
   const amountRaw = String(formData.get("amount") ?? "").trim();
+  // 沒選類別（例如舊版前端快取還沒更新）就預設「維修」，跟資料庫欄位的
+  // 預設值一致，不會擋住送出。
+  const categoryRaw = String(formData.get("category") ?? "維修").trim();
 
   if (!carId) {
     return { error: "缺少車輛 ID，無法送出請款。" };
@@ -40,6 +53,10 @@ export async function createRepairItem(
   if (amountRaw === "" || !Number.isFinite(amount) || amount < 0) {
     return { error: "請輸入正確的請款金額。" };
   }
+  if (!REPAIR_ITEM_CATEGORIES.includes(categoryRaw as RepairItemCategory)) {
+    return { error: "請選擇正確的請款類別。" };
+  }
+  const category = categoryRaw as RepairItemCategory;
 
   const supabase = await createClient();
 
@@ -68,21 +85,41 @@ export async function createRepairItem(
     }
   }
 
-  const { error } = await supabase.from("repair_items").insert({
-    tenant_id: profile.tenant_id!,
-    car_id: carId,
-    item_name: itemName,
-    vendor_name: vendorName || null,
-    handler_name: handlerName || null,
-    amount,
-    receipt_number: receiptNumber || null,
-    evidence_path: evidencePath,
-    status: "pending",
-  });
+  // select("id") 拿回剛新增那筆的 id，讓下面的通知可以帶上「傳送門」連結
+  // 直接指到這一筆，不是只導去整備維修分頁讓人自己找。
+  const { data: inserted, error } = await supabase
+    .from("repair_items")
+    .insert({
+      tenant_id: profile.tenant_id!,
+      car_id: carId,
+      item_name: itemName,
+      vendor_name: vendorName || null,
+      handler_name: handlerName || null,
+      amount,
+      receipt_number: receiptNumber || null,
+      evidence_path: evidencePath,
+      status: "pending",
+      category,
+    })
+    .select("id")
+    .single();
 
-  if (error) {
-    return { error: `送出維修請款失敗：${error.message}` };
+  if (error || !inserted) {
+    return { error: `送出維修請款失敗：${error?.message ?? "未知錯誤"}` };
   }
+
+  // 通知車行管理員有新的請款待審核——鈴鐺通知，讓管理員不用一直手動
+  // 進「整備維修」分頁才知道有新的東西要處理。link 帶上 highlight=該筆 id，
+  // 讓管理員點通知就直接跳到、並反白這一筆，不用在列表裡自己找。寫入
+  // 失敗只記錄錯誤，見 createNotification() 的說明。
+  await createNotification({
+    tenantId: profile.tenant_id!,
+    type: "repair_item_pending",
+    title: "新的維修請款待審核",
+    message: `${profile.name ?? "有人"} 提交了一筆「${itemName}」（${category}）請款，金額 ${formatCurrency(amount)}`,
+    actorName: profile.name,
+    link: `?module=maintenance&highlight=${inserted.id}`,
+  });
 
   revalidatePath("/dashboard");
   return { success: true };
@@ -90,25 +127,68 @@ export async function createRepairItem(
 
 /**
  * 會計審核：核准撥款 / 退回。
- * 刻意限制只有 tenant_admin（車行管理員，扮演會計角色 —— 系統目前沒有
- * 獨立的「會計」角色）能執行，一般員工只能送出申請、不能自己核准自己的
- * 請款。前端也會隱藏這兩顆按鈕，但實際的權限判斷一定要在這裡（伺服器端）
- * 再做一次，不能只靠前端藏起來。
- */
+ * 2026-08-29 起改用 canApproveRepairs（見 src/lib/permissions.ts）判斷，
+ * 不再只認 tenant_admin：老闆一律有這個權限，「會計」角色預設也有，
+ * 「店長」「員工」則預設沒有、但老闆可以在「帳號與權限管理」個別開放。
+ * 一般員工只能送出申請、不能自己核准自己的請款。前端也會隱藏這兩顆
+ * 按鈕，但實際的權限判斷一定要在這裡（伺服器端）再做一次，不能只靠
+ * 前端藏起來。
+ *
+ * 2026-08-31 新增 paymentMethod 參數：安安反映「請款了但水池的錢沒有
+ * 變少」——查下來是因為 repair_items 這張表原本完全沒有付款方式欄位，
+ * 「資金總覽」水池的四個資料來源（deals/cars/company_expenses/手動記帳）
+ * 從來就沒有把已核准的請款算進去過，不是漏寫哪一行程式，是這張表根本
+ * 沒有可以歸類的欄位。核准撥款（decision === "approved"）當下才需要選
+ * 現金或銀行——這是會計實際付錢出去那一刻才知道的事，不是業務送出
+ * 請款申請時就該決定的，所以放在審核這一步而不是 createRepairItem()。
+ * 退回（rejected）不會有真的付款，paymentMethod 可以不帶。
+ *
+ * 2026-09-04 新增 accountId 參數：金流架構 Phase 2，核准撥款時選填指定
+ * 是從哪個金流帳戶付出去的（新版多帳戶架構，見 FinancialAccount），跟
+ * paymentMethod（現金/銀行）並存，不是取代關係。選填，不像
+ * paymentMethod 是必填——不想因為車行還沒開始用新帳戶架構就擋住既有的
+ * 核准撥款流程。 */
 export async function reviewRepairItem(
   itemId: string,
-  decision: Extract<RepairItemStatus, "approved" | "rejected">
+  decision: Extract<RepairItemStatus, "approved" | "rejected">,
+  paymentMethod?: CashPoolMethod | null,
+  accountId?: string | null
 ): Promise<RepairReviewResult> {
   const { profile } = await requireTenantUser();
 
-  if (profile.role !== "tenant_admin") {
+  if (!getEffectivePermissions(profile).canApproveRepairs) {
     return { error: "沒有權限執行會計審核，請聯繫車行管理員。" };
   }
 
+  if (decision === "approved" && !VALID_CASH_POOL_METHODS.includes(paymentMethod as CashPoolMethod)) {
+    return { error: "核准撥款前請先選擇撥款方式（現金／銀行），這樣「資金總覽」水池才能正確扣款。" };
+  }
+
   const supabase = await createClient();
+
+  // 有選帳戶的話，確認這個帳戶真的是這個車行自己的、而且還在使用中，
+  // 理由跟 company-expenses-actions.ts 的同一段檢查一樣。
+  if (decision === "approved" && accountId) {
+    const { data: accountRow } = await supabase
+      .from("financial_accounts")
+      .select("id")
+      .eq("id", accountId)
+      .eq("tenant_id", profile.tenant_id!)
+      .eq("is_active", true)
+      .maybeSingle();
+    if (!accountRow) {
+      return { error: "選擇的帳戶不存在或已停用，請重新選擇。" };
+    }
+  }
+
   const { error } = await supabase
     .from("repair_items")
-    .update({ status: decision, reviewed_at: new Date().toISOString() })
+    .update({
+      status: decision,
+      reviewed_at: new Date().toISOString(),
+      payment_method: decision === "approved" ? paymentMethod : null,
+      account_id: decision === "approved" ? accountId || null : null,
+    })
     .eq("id", itemId);
 
   if (error) {

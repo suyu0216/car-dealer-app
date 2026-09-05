@@ -1,7 +1,7 @@
 "use client";
 
 import type { Car, Deal } from "@/lib/supabase/types";
-import { formatCurrency } from "@/lib/format";
+import { formatCurrency, formatDate } from "@/lib/format";
 
 export function DealContractPreview({
   deal,
@@ -34,7 +34,7 @@ export function DealContractPreview({
           <div className="flex items-center justify-between border-b-2 border-neutral-800 pb-3">
             <h1 className="text-2xl font-bold">中古車買賣合約書</h1>
             <p className="text-sm text-neutral-500">
-              {new Date(deal.created_at).toLocaleDateString("zh-TW")}
+              {formatDate(deal.created_at)}
             </p>
           </div>
 

@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import type { Car, RepairItem, Role } from "@/lib/supabase/types";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams, useRouter, usePathname } from "next/navigation";
+import type { Car, FinancialAccount, RepairItem } from "@/lib/supabase/types";
 import type { EffectivePermissions } from "@/lib/permissions";
 import { CarsKpi } from "./cars-kpi";
 import { CarFilterBar, defaultCarFilters, type CarFilters } from "./car-filter-bar";
@@ -17,39 +18,149 @@ type ModalState =
   | { mode: "view"; car: Car }
   | null;
 
+/**
+ * 每輛車「已核准撥款」的整備維修費用加總——跟車輛詳情頁「維修請款與
+ * 會計」分頁（car-maintenance-tab.tsx）、車行經營數據看板（cars-kpi.tsx）
+ * 用的是同一套公式，維修/整備費用一律以 repair_items 這張請款紀錄表為
+ * 唯一真實來源，不再讀車輛表單裡那個已經棄用、沒人在同步的
+ * repair_cost 手動欄位（見 car-form-modal.tsx 拿掉那個欄位的說明）。
+ * 待審核中的項目不計入，避免還沒核准撥款的金額被當成「已經花掉的錢」。
+ */
+function computeApprovedPrepCostByCar(repairItems: RepairItem[]) {
+  const map = new Map<string, number>();
+  for (const item of repairItems) {
+    if (item.status !== "approved") continue;
+    map.set(item.car_id, (map.get(item.car_id) ?? 0) + Number(item.amount));
+  }
+  return map;
+}
+
 function matchesKeyword(car: Car, keyword: string) {
-  if (!keyword.trim()) return true;
+  const trimmed = keyword.trim().toLowerCase();
+  if (!trimmed) return true;
+
   const haystack = [car.model_name, car.license_plate, car.vin, car.brand]
     .filter(Boolean)
     .join(" ")
     .toLowerCase();
-  return haystack.includes(keyword.trim().toLowerCase());
+  if (haystack.includes(trimmed)) return true;
+
+  // 車牌／VIN 常見打法落差——存的可能是「ABC-1234」，但使用者直接打
+  // 「ABC1234」（沒加「-」）就完全比對不到，反過來也一樣。這裡額外拿掉
+  // 空格跟「-」再比對一次，兩種打法都找得到，不會因為多打/少打一個
+  // 分隔符號就搜不到明明存在的車。
+  const normalizedHaystack = haystack.replace(/[\s-]/g, "");
+  const normalizedKeyword = trimmed.replace(/[\s-]/g, "");
+  return normalizedKeyword.length > 0 && normalizedHaystack.includes(normalizedKeyword);
 }
 
 export function CarsManager({
   cars,
   repairItems,
   receiptUrls,
-  role,
   permissions,
   tenantName,
+  staff,
+  financialAccounts,
 }: {
   cars: Car[];
   repairItems: RepairItem[];
   receiptUrls: Record<string, string>;
-  role: Role;
   permissions: EffectivePermissions;
   tenantName?: string;
+  /** 給「上架人」顯示（car-detail-modal.tsx）跟「墊款業務/經手人」下拉選單
+   * （car-maintenance-tab.tsx）用，同一份員工清單全車行共用。 */
+  staff: { id: string; name: string | null }[];
+  /** 2026-09-04 新增：車輛詳情頁「維修請款與會計」分頁核准撥款時選帳戶
+   * 用，見 car-maintenance-tab.tsx 的 RepairItemRow。 */
+  financialAccounts: FinancialAccount[];
 }) {
   const [view, setView] = useState<"table" | "gallery">("gallery");
   const [showTrash, setShowTrash] = useState(false);
   const [modalState, setModalState] = useState<ModalState>(null);
+
+  // 2026-08-31 新增：從「新車入庫，尚待填寫底價」通知點進來的話，網址會
+  // 帶 ?highlight=<car_id>——跟 company-expenses-module.tsx／
+  // maintenance-module.tsx 那種「捲到並反白該筆」不一樣，這裡會計真正
+  // 要做的事是「把底價補上」，所以不只是捲動反白，而是直接自動開啟那輛
+  // 車的編輯表單（跟平常點「編輯」按鈕開出來的是同一個 Modal），點通知
+  // 就能直接跳進去填底價，不用自己再從一長串車輛清單裡找。用 useRef
+  // 記住「已經自動開過的 highlightId」，避免使用者手動關掉表單後，這個
+  // effect 因為 cars 或其他依賴重新執行又把它硬打開、關不掉。
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+  const highlightId = searchParams.get("highlight");
+  const autoOpenedHighlightRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!highlightId || autoOpenedHighlightRef.current === highlightId) return;
+    const target = cars.find((c) => c.id === highlightId);
+    if (!target) return;
+    autoOpenedHighlightRef.current = highlightId;
+    setModalState({ mode: "edit", car: target });
+    // 2026-09-05 修正：安安反映「一重新整理就跳到（這輛車的編輯）表單」
+    // ——根本原因是自動開啟表單之後，網址上的 ?highlight=<car_id> 從來
+    // 沒被清掉；使用者手動重新整理頁面（F5）時，整個元件會重新掛載，
+    // autoOpenedHighlightRef 這個 useRef 也會被重置回 null，highlightId
+    // 卻還在網址上，於是這個 effect 又重新判定「還沒自動開過」、把同一
+    // 輛車的編輯表單再彈出來一次，不管使用者上次是不是已經自己關掉了。
+    // 修法：自動開啟表單之後，立刻用 router.replace()（不是 push，不會
+    // 多留一筆瀏覽器上一頁的紀錄）把 highlight 從網址上拿掉，其餘參數
+    // （例如 module=inventory）保留，這樣重新整理就只是回到「車輛庫存
+    // 管理」分頁，不會再自動彈出表單。
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("highlight");
+    const query = params.toString();
+    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [highlightId, cars]);
+
+  // 2026-08-30 新增：大圖卡片（藝廊卡片）上「成本＋開銷」那一行的顯示
+  // 開關——安安想要一眼看到每台車目前的成本+開銷，但也要能自己選擇要
+  // 不要顯示，預設是開啟的。這只是單純的「這個瀏覽器要不要顯示」偏好，
+  // 不是权限，所以存在 localStorage 就好，不用寫進資料庫、也不用經過
+  // Server Action；跟 canViewCost 是分開的兩件事——沒有 canViewCost 的
+  // 人，不管這個開關開或關，卡片上一律看不到金額（見 car-card.tsx）。
+  const [showCostOnCards, setShowCostOnCards] = useState(true);
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem("cda_showCostOnCards");
+      if (stored !== null) setShowCostOnCards(stored === "true");
+    } catch {
+      // localStorage 被瀏覽器封鎖（例如無痕模式的某些設定）就維持預設值
+      // true，不影響其他功能。
+    }
+  }, []);
+  // 2026-08-30 新增：業務抽成（已結帳車輛的 closed_commission_cost）是
+  // 薪資隱私，不能只靠 canViewCost 判斷要不要顯示——預設看得到成本的
+  // 店長、或被個別開放 canViewCost 的一般員工，不該連帶看到別人的抽成。
+  // 只有「看得到全體薪資」（canViewAllSalary，會計/老闆預設有）或
+  // 「會計/財務管理」（canManageFinance）才看得到，見 car-card.tsx／
+  // car-detail-modal.tsx 怎麼用這個值。
+  const canViewCommission = permissions.canViewAllSalary || permissions.canManageFinance;
+
+  function toggleShowCostOnCards() {
+    setShowCostOnCards((prev) => {
+      const next = !prev;
+      try {
+        window.localStorage.setItem("cda_showCostOnCards", String(next));
+      } catch {
+        // 存不了就算了，這次切換在畫面上還是會生效，只是重新整理後會
+        // 退回預設值。
+      }
+      return next;
+    });
+  }
 
   // 軟刪除的車輛（deleted_at 非 null）預設從庫存列表隱藏——不進 KPI、
   // 不進篩選/表格/藝廊卡片，只在「已刪除」面板（showTrash）看得到、可以
   // 復原。見 cars-actions.ts 的 deleteCar()/restoreCar() 說明。
   const activeCars = useMemo(() => cars.filter((c) => !c.deleted_at), [cars]);
   const deletedCars = useMemo(() => cars.filter((c) => c.deleted_at), [cars]);
+  // 2026-08-30 新增：已售出車輛預設不顯示在車輛進銷存清單（見下面
+  // filteredCars 的說明），這裡另外算一個數量，讓工具列可以放一顆快捷
+  // 按鈕直接切換去看已售出的車，不用自己找「狀態」篩選在哪裡。
+  const soldCars = useMemo(() => activeCars.filter((c) => c.status === "sold"), [activeCars]);
   // 車輛新增/編輯 Modal 關閉後的非阻斷性警告（目前唯一情境：照片上傳失敗，
   // 但車輛本身已經存檔成功）。用 Toast 顯示幾秒鐘後自動消失，不擋任何操作。
   const [toast, setToast] = useState<string | null>(null);
@@ -82,10 +193,24 @@ export function CarsManager({
     defaultCarFilters(priceBounds.min, priceBounds.max)
   );
 
+  const repairCostByCar = useMemo(() => computeApprovedPrepCostByCar(repairItems), [repairItems]);
+
+  // 2026-08-30：安安反映「已售出的車還留在車輛進銷存畫面」很奇怪——賣掉
+  // 就已經不算庫存了。這裡改成：狀態篩選在「全部狀態」時，預設不顯示
+  // 已售出的車（跟 cars-kpi.tsx 的 isInInventory() 邏輯、「庫存總成本」
+  // 只算未售出車輛是同一套定義），除非使用者自己在上面「狀態」篩選
+  // 特別選「已售出」要找舊紀錄，才會看到已售出的車。這只影響「車輛
+  // 進銷存」清單（藝廊卡片／表格）要不要顯示，已售出車輛本身的資料、
+  // 合約、抽成快照都完全不受影響，還是能透過「買賣合約與交易」或直接
+  // 選狀態篩選「已售出」找回來，不是刪除或藏起來。
   const filteredCars = activeCars.filter((car) => {
     if (!matchesKeyword(car, filters.keyword)) return false;
     if (filters.brand !== "all" && car.brand !== filters.brand) return false;
-    if (filters.status !== "all" && car.status !== filters.status) return false;
+    if (filters.status === "all") {
+      if (car.status === "sold") return false;
+    } else if (car.status !== filters.status) {
+      return false;
+    }
     if (filters.yearMin && (car.year ?? 0) < Number(filters.yearMin)) return false;
     if (filters.yearMax && (car.year ?? Infinity) > Number(filters.yearMax)) return false;
     if (filters.mileageMax && (car.mileage ?? 0) > Number(filters.mileageMax)) return false;
@@ -131,6 +256,39 @@ export function CarsManager({
               ☰ 清單表格
             </button>
           </div>
+          {permissions.canViewCost && view === "gallery" && (
+            <button
+              type="button"
+              onClick={toggleShowCostOnCards}
+              className={
+                "rounded-lg border px-3 py-1.5 text-sm font-medium transition " +
+                (showCostOnCards
+                  ? "border-[#BFA074] bg-white text-[#A6793D]"
+                  : "border-neutral-200 bg-white text-neutral-500 hover:border-[#BFA074] hover:text-[#A6793D]")
+              }
+            >
+              {showCostOnCards ? "✓ 顯示成本＋開銷" : "顯示成本＋開銷"}
+            </button>
+          )}
+          {soldCars.length > 0 && (
+            <button
+              type="button"
+              onClick={() =>
+                setFilters((prev) => ({
+                  ...prev,
+                  status: prev.status === "sold" ? "all" : "sold",
+                }))
+              }
+              className={
+                "rounded-lg border px-3 py-1.5 text-sm font-medium transition " +
+                (filters.status === "sold"
+                  ? "border-[#BFA074] bg-white text-[#A6793D]"
+                  : "border-neutral-200 bg-white text-neutral-500 hover:border-[#BFA074] hover:text-[#A6793D]")
+              }
+            >
+              🚗 已售出（{soldCars.length}）
+            </button>
+          )}
           {permissions.canEditCars && deletedCars.length > 0 && (
             <button
               type="button"
@@ -184,6 +342,7 @@ export function CarsManager({
                 cars={filteredCars}
                 canViewCost={permissions.canViewCost}
                 canEditCars={permissions.canEditCars}
+                repairCostByCar={repairCostByCar}
                 onView={(car) => setModalState({ mode: "view", car })}
                 onEdit={(car) => setModalState({ mode: "edit", car })}
               />
@@ -191,7 +350,10 @@ export function CarsManager({
               <CarGallery
                 cars={filteredCars}
                 canViewCost={permissions.canViewCost}
+                canViewCommission={canViewCommission}
                 canEditCars={permissions.canEditCars}
+                repairCostByCar={repairCostByCar}
+                showCost={showCostOnCards}
                 onView={(car) => setModalState({ mode: "view", car })}
                 onEdit={(car) => setModalState({ mode: "edit", car })}
               />
@@ -203,12 +365,16 @@ export function CarsManager({
       {modalState?.mode === "view" && (
         <CarDetailModal
           car={modalState.car}
-          role={role}
+          canReview={permissions.canApproveRepairs}
           canViewCost={permissions.canViewCost}
+          canViewCommission={canViewCommission}
+          canViewFinalCost={permissions.canViewFinalCost}
           canEditCars={permissions.canEditCars}
           tenantName={tenantName}
           repairItems={repairItems.filter((r) => r.car_id === modalState.car.id)}
           receiptUrls={receiptUrls}
+          staff={staff}
+          financialAccounts={financialAccounts}
           onClose={() => setModalState(null)}
           onEdit={() => setModalState({ mode: "edit", car: modalState.car })}
         />
@@ -219,6 +385,9 @@ export function CarsManager({
           mode={modalState.mode}
           car={modalState.mode === "edit" ? modalState.car : undefined}
           canViewCost={permissions.canViewCost}
+          canViewFinalCost={permissions.canViewFinalCost}
+          staff={staff}
+          financialAccounts={financialAccounts}
           onClose={closeFormModal}
         />
       )}

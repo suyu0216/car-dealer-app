@@ -1,9 +1,18 @@
 // 共用型別，對應 supabase_schema.sql 的資料表結構。
 // 若之後改用 `supabase gen types typescript`，可以直接取代這個檔案。
 
-export type Role = "super_admin" | "tenant_admin" | "staff";
+export type Role = "super_admin" | "tenant_admin" | "manager" | "accountant" | "staff";
 
 export type CarStatus = "preparing" | "in_stock" | "reserved" | "sold";
+
+// 車型分類——跟 supabase_schema.sql 的 cars_body_type_check constraint
+// 保持一致，兩邊都要一起改。放在這個純型別檔案（不是 cars-actions.ts），
+// 是因為 cars-actions.ts 開頭有 "use server"，Server Actions 檔案只能
+// export async function，不能 export 一般的常數/型別，車輛表單（client
+// component）跟前台展間頁都需要 import 這份清單，得放在沒有這個限制的
+// 共用檔案裡。
+export const VALID_BODY_TYPES = ["小型車", "房車", "休旅車", "跑車", "商用車"] as const;
+export type BodyType = (typeof VALID_BODY_TYPES)[number];
 
 export type TransactionType = "income" | "expense";
 
@@ -21,9 +30,51 @@ export interface Tenant {
   logo_url: string | null;
   /** LINE 官方帳號/個人 ID，前台展間可以顯示成聯絡方式。 */
   line_id: string | null;
+  /** 理念與初衷：顧客前台展間顯示的品牌故事文字，選填。 */
+  brand_story: string | null;
+  /** 展間頁首圖橫幅（Hero）的自訂大圖網址，選填——不設定的話
+   * showroom-page.tsx 會自動退回用「最新上架、有照片」的那台車當背景，
+   * 見該檔案 heroCar 的說明。存 car-photos bucket，見 storage.ts 的
+   * uploadTenantHeroImage()。 */
+  hero_image_url: string | null;
+  /** 社群媒體連結（Facebook／Instagram／抖音），選填，給前台展間頁 footer
+   * 的「傳送門」圖示連結用。 */
+  facebook_url: string | null;
+  instagram_url: string | null;
+  tiktok_url: string | null;
+  /** 前台「服務項目」區塊文字，換行分隔一條一條服務，選填。 */
+  services_text: string | null;
+  /** 前台「品牌價值主張」區塊文字，換行分隔一條一條主張，選填。 */
+  value_props_text: string | null;
   status: TenantStatus;
   /** 是否已經完成過一次「車行品牌設定」引導，見 onboarding-wizard.tsx。 */
   onboarding_completed: boolean;
+  /** 資金總覽水池：起算點當下的現金／銀行餘額，跟 cash_pool_started_at
+   * 一起使用，見 cash-pool-actions.ts 的說明。尚未設定過就是 null。 */
+  cash_opening_balance: number | null;
+  bank_opening_balance: number | null;
+  /** 資金總覽水池的起算日期；只有這天（含）之後的成交收款／開銷／進貨
+   * 付款／手動紀錄才會計入水池增減，避免舊資料把餘額算歪。 */
+  cash_pool_started_at: string | null;
+  /** 前台看車頁信任徽章：Google 商家整體星等（0-5，可小數，例如 4.8）。
+   * 不是即時串接 Google API 抓的——Google Places API 的評論欄位快取限制
+   * 很嚴、費用也不低，車行自己在「品牌設定」分頁手動填寫/更新即可，見
+   * brand-settings-module.tsx。null 代表還沒填。 */
+  google_rating: number | null;
+  /** 前台看車頁信任徽章：Google 評論則數，同樣手動填寫。 */
+  google_review_count: number | null;
+  /** 前台看車頁信任徽章「查看更多評論」按鈕連結，通常是車行的 Google
+   * 地圖評論頁網址，車行自己去 Google 商家後台複製。 */
+  google_review_url: string | null;
+  /** 「淨利／分潤試算」小工具（會計頁面分頁）是否啟用——給有股東/合夥人
+   * 分潤需求的車行（例如分店）自己開，不需要的車行（例如單一車行沒有
+   * 分潤安排）維持關閉，會計頁面就不會多出這個分頁造成困擾。管理員自己
+   * 在「淨利／分潤試算」分頁裡開關，見 profit-share-module.tsx。 */
+  profit_share_enabled: boolean;
+  /** 分潤試算用的股權比例（0-100，可小數，例如 30 代表 30%）——系統拿
+   * 這個比例乘上試算出的月淨利，算出「分潤金額」。null 代表管理員還沒
+   * 填，這時分潤金額試算不出來，只會顯示淨利本身。 */
+  profit_share_equity_percent: number | null;
   created_at: string;
 }
 
@@ -32,12 +83,37 @@ export interface Profile {
   tenant_id: string | null;
   role: Role;
   name: string | null;
-  // 業務權限開關（RBAC）：只對 role === "staff" 有意義，tenant_admin /
-  // super_admin 一律視為全部 true——不要直接讀這三欄做權限判斷，一律透過
-  // src/lib/permissions.ts 的 getEffectivePermissions() 取得實際生效的權限。
+  // 業務權限開關（RBAC）：只對「非老闆」角色（manager/accountant/staff）
+  // 有意義，tenant_admin / super_admin 一律視為全部 true——不要直接讀這六欄
+  // 做權限判斷，一律透過 src/lib/permissions.ts 的 getEffectivePermissions()
+  // 取得實際生效的權限。角色（role）決定邀請/切換角色當下套用的預設值
+  // （見 permissions.ts 的 ROLE_DEFAULT_PERMISSIONS），之後老闆還能針對
+  // 個別員工再微調這六個開關，不受角色限制。
   can_view_cost: boolean;
   can_view_salary: boolean;
   can_edit_cars: boolean;
+  /** 可以看到全體員工的薪資／抽成明細（不只自己），給「業務薪資」
+   * 「薪資單」模組用。 */
+  can_view_all_salary: boolean;
+  /** 可以審核（核准/退回）維修與美容請款——扮演「會計審核」角色。 */
+  can_approve_repairs: boolean;
+  /** 可以使用「會計與財務管理」頁面（公司開銷、資金總覽、淨利分潤試算）。 */
+  can_manage_finance: boolean;
+  /** 可以檢視「車行經營數據看板」（場內在庫狀況、本月銷售績效、業務
+   * 排行榜、年度整備開銷趨勢）。2026-08-29 之前這個功能是跟
+   * can_view_cost 綁在一起的，現在拆成獨立欄位，兩者可以分開勾選。 */
+  can_view_analytics: boolean;
+  /** 公開展示用的個人電話，員工自己在「我的公開聯繫方式」分頁填寫，選填。 */
+  public_phone: string | null;
+  /** 公開展示用的個人 LINE ID，同上。 */
+  public_line_id: string | null;
+  /** 是否同意把上面兩欄公開顯示在顧客前台展間（/inventory）的「聯繫我們
+   * 的業務」區塊——預設 false，員工自己勾選才會公開，不是填了就自動公開。 */
+  show_public_contact: boolean;
+  /** 公開展示用的個人簡介，同上一樣受 show_public_contact 控制。 */
+  public_bio: string | null;
+  /** 公開展示用的大頭照網址（car-photos bucket 公開網址），同上。 */
+  public_avatar_url: string | null;
   created_at: string;
 }
 
@@ -64,26 +140,54 @@ export interface Car {
   // 財務與成本結構
   purchase_price: number;
   transfer_fee: number | null;
+  /** 這台車的稅金／發票稅金——不同車型、公司車/一般車稅率都不同，沒辦法
+   * 用固定百分比自動算，車行自己填實際金額，見 car-form-modal.tsx。 */
+  tax_amount: number | null;
   detailing_cost: number | null;
   repair_cost: number | null;
   floor_price: number | null;
   selling_price: number | null;
   final_price: number | null;
+  /** 2026-08-31 新增：真實的「最終成本價格」，跟 purchase_price（收購
+   * 進價，可能刻意墊高過）分開存放。只有 canViewFinalCost 權限（見
+   * permissions.ts，預設只有會計/老闆）看得到／填得到，即使有一般的
+   * canViewCost 權限也不例外。純粹是會計內部記錄用途，不影響淨利／
+   * 分潤試算、業務抽成等既有的成本計算（那些一律還是讀 purchase_price，
+   * 沒有這個欄位的權限也完全不受影響）。 */
+  final_cost_price: number | null;
   // 會計結帳快照：只有在 status === 'sold' 時才會有值，見
   // supabase_schema.sql 對這三欄的說明。非 null 代表這輛車已經結帳封存。
   closed_at: string | null;
   closed_prep_cost: number | null;
+  /** 結帳當下對應合約的業務抽成（封存快照）；已經計入 closed_total_cost，
+   * 這裡單獨留一欄是為了在車輛詳情頁把「業務抽成」跟其他成本分開顯示。
+   * NULL＝尚未結帳，或結帳當下沒有對應的抽成。 */
+  closed_commission_cost: number | null;
   closed_total_cost: number | null;
   // 進貨與付款追蹤
   paid_amount: number | null;
   payment_method: PaymentMethod | null;
+  /** 2026-09-04 新增：這筆進貨付款選填指定是從哪個金流帳戶付出去的
+   * （新版多帳戶架構，跟上面 payment_method 並存，不是取代關係）。 */
+  purchase_account_id: string | null;
   payment_note: string | null;
+  /** 採購業務：這輛車是哪位同仁負責收購進來的，跟 created_by（誰在系統
+   * 裡輸入這筆資料）、deals.salesperson_id（誰賣給客戶）是三件不同的事。
+   * 存的是 profiles.id，畫面上要對照 staff 清單才能顯示名字。 */
+  purchased_by: string | null;
   // 行政過戶與第三方認證
   transfer_date: string | null;
   transfer_status: TransferStatus | null;
   inspection_agency: string | null;
   inspection_date: string | null;
   inspection_status: string | null;
+  /** 2026-09-04 新增：車籍（行照）目前是否已經在公司名下，使用者手動
+   * 設定，獨立於下面「二胎／人頭車」自動推算的邏輯之外——那套邏輯只
+   * 處理「登記在別人名下」的情況，沒辦法表達「沒有二胎/人頭，但車籍
+   * 也還沒過戶到公司名下」這個剛入庫的常見情境（見
+   * car-title-badge.tsx 的說明）。既有車輛在資料庫層級預設 true（維持
+   * 原本畫面顯示），新增車輛表單則預設未勾選。 */
+  title_at_company: boolean;
   // 二胎／人頭車合作紀錄：has_used_as_nominee 是永久旗標，一旦 true 就
   // 不會再被改回 false，見 supabase_schema.sql 跟 cars-actions.ts 的說明。
   nominee_company: string | null;
@@ -93,10 +197,28 @@ export interface Car {
   has_used_as_nominee: boolean;
   // 前台展示開關：/inventory 公開看車頁只會撈 is_public = true 的車輛。
   is_public: boolean;
+  // 車型分類（小型車/房車/休旅車/跑車/商用車）——給前台展間頁上方的分類
+  // 選單用，可為 null（未分類/新上架還沒選）。「熱門推薦」是後台手動
+  // 開關，不是系統自動判斷，跟這個系統一貫「不寫憑空捏造的熱門/搶購
+  // 假訊息」的原則一致（見 public-cars.ts 對「近期上架」標籤的說明）。
+  body_type: string | null;
+  is_featured: boolean;
+  // 前台「現有車輛」頁車輛清單／焦點車款首圖要不要用大圖廣告卡呈現——
+  // 後台手動開關，車行自己針對每一台車決定，不是系統自動判斷（例如
+  // 排序第一台就自動放大），也跟 is_featured（熱門推薦）是各自獨立的
+  // 兩個開關互不影響，見 showroom-grid.tsx／showroom-cars-section.tsx
+  // 對這個欄位的說明。
+  is_large_card: boolean;
   // 其他
   status: CarStatus;
   image_url: string | null;
   created_at: string;
+  /** 上架人：這輛車是哪位同仁在系統裡新增的（見 cars-actions.ts 的
+   * createCar()），只在新增當下寫入一次，之後編輯車輛不會改變。存的是
+   * profiles.id，畫面上要對照 staff 清單才能顯示名字——這個人如果後來
+   * 被移出車行/刪除帳號，這裡會變成 null（見 supabase_schema.sql 的
+   * on delete set null），車輛本身不受影響。 */
+  created_by: string | null;
   /** 軟刪除時間戳記；非 null 代表這輛車已經被「刪除」（預設從庫存列表隱藏，
    * 但資料列本身、關聯的 repair_items/deals/car_photos 都還在，可以復原）。
    * 見 supabase_schema.sql 對這欄的說明。 */
@@ -105,6 +227,13 @@ export interface Car {
 
 export type PaymentMethod = "bank_transfer" | "debt_settlement" | "cash";
 export type TransferStatus = "待辦" | "辦理中" | "已完成";
+
+/** 資金總覽水池只分兩池：cash=現金 / bank=銀行（含匯款、信用卡——信用卡
+ * 帳單最終還是從銀行帳戶扣款，歸類進銀行池）。跟 cars.payment_method
+ * （bank_transfer/debt_settlement/cash）、company_expenses.payment_method
+ * （匯款/現金/信用卡）是各自欄位原本就有的、更細的付款方式，水池計算時
+ * 會把那些值換算成這兩池之一，見 cash-pool.ts 的 toPoolMethod()。 */
+export type CashPoolMethod = "cash" | "bank";
 
 /** 車輛細節相簿；主圖仍是 Car.image_url，這裡放額外的細節照片。
  * 目前系統還沒有相簿瀏覽 UI，這個型別先備著給匯入腳本/未來功能用。 */
@@ -117,6 +246,9 @@ export interface CarPhoto {
   created_at: string;
 }
 
+/** 手動記帳的其他現金異動（不屬於成交收款／公司開銷／進貨付款的部分，
+ * 例如老闆存入、老闆提領、銀行利息、轉帳手續費），給「資金總覽」水池
+ * 補資料用，見 cash-pool-actions.ts。這張表本來就存在但一直沒被用到。 */
 export interface Transaction {
   id: string;
   tenant_id: string;
@@ -125,10 +257,74 @@ export interface Transaction {
   type: TransactionType;
   category: string;
   amount: number;
+  payment_method: CashPoolMethod | null;
+  /** 2026-09-04 新增：這筆手動記帳選填指定是哪個金流帳戶的收支（新版
+   * 多帳戶架構，跟上面 payment_method 現金/銀行並存，不是取代關係）。 */
+  account_id: string | null;
   note: string | null;
+  /** 2026-09-05 新增：作廢＋沖銷機制，取代直接刪除——見
+   * cash-pool-actions.ts 的 voidManualCashTransaction() 開頭說明。
+   * voided_at 有值＝這筆原始記帳已被作廢（NULL＝正常有效）；
+   * reversed_transaction_id 有值＝這一列本身是沖銷列，指向它沖銷的
+   * 原始 transactions.id。一般正常/被作廢的原始列 reversed_transaction_id
+   * 一律是 NULL。 */
+  voided_at: string | null;
+  voided_by: string | null;
+  reversed_transaction_id: string | null;
+}
+
+/** 每日對帳：見 account-reconciliations-actions.ts 開頭的說明。 */
+export interface AccountReconciliation {
+  id: string;
+  tenant_id: string;
+  account_id: string;
+  date: string;
+  counted_balance: number;
+  counted_by: string | null;
+  note: string | null;
+  created_at: string;
+}
+
+/** 2026-09-05 新增：「公積金」——進貨／客戶預訂的訂金收支追蹤清單，
+ * 見 supabase_schema.sql 裡 vehicle_pipeline_entries 表的說明。刻意跟
+ * cars/deals 兩張表不綁定，車還沒回來時資料本來就不齊全，純粹是安安
+ * 自己要看的「規劃／備忘」清單，不是正式車籍或合約紀錄。2026-09-05
+ * 追加：安安反映錢要付出去買車叫「進貨」，不是「調車中」，UI 上的文字
+ * 統一改成「進貨」（direction 值本身仍是英文 "purchase"，不受影響）。 */
+export type VehiclePipelineDirection = "purchase" | "preorder";
+export type VehiclePipelineStatus = "pending" | "deposit_paid" | "fulfilled" | "cancelled";
+
+export interface VehiclePipelineEntry {
+  id: string;
+  tenant_id: string;
+  /** purchase＝進貨（錢即將要付出去給賣家/車商）；preorder＝客戶預訂
+   * （錢即將要跟客戶收，或已經先收了訂金）。 */
+  direction: VehiclePipelineDirection;
+  vehicle_description: string;
+  counterparty_name: string | null;
+  counterparty_contact: string | null;
+  deposit_amount: number;
+  /** null＝這筆訂金還沒真的入帳，只是先記錄；有值＝已經透過
+   * confirmVehiclePipelineDeposit() 確認入帳的日期。 */
+  deposit_paid_at: string | null;
+  deposit_account_id: string | null;
+  /** 訂金確認入帳後，指向 transactions 表系統自動建立的那筆手動記帳。 */
+  deposit_transaction_id: string | null;
+  expected_balance_amount: number | null;
+  expected_date: string | null;
+  status: VehiclePipelineStatus;
+  note: string | null;
+  created_at: string;
+  created_by: string | null;
 }
 
 export type RepairItemStatus = "pending" | "approved" | "rejected";
+
+/** 請款類別——取代車輛表單原本手動填、沒人真的在同步的「整理美容成本」
+ * 欄位。'維修' 對應原本的「整備維修成本」，'美容' 對應「整理美容成本」，
+ * '其他' 是不屬於這兩類的雜項開銷（例如代辦規費）。見
+ * car-detail-modal.tsx 依類別分開加總顯示的邏輯。 */
+export type RepairItemCategory = "維修" | "美容" | "其他";
 
 export interface RepairItem {
   id: string;
@@ -140,14 +336,26 @@ export interface RepairItem {
   amount: number;
   receipt_number: string | null;
   status: RepairItemStatus;
+  category: RepairItemCategory;
   /** 舊版「貼網址」欄位，向下相容用；新資料一律用 evidence_path。 */
   evidence_url: string | null;
   /** Supabase Storage repair-evidences bucket 裡的物件路徑（私有 bucket，
    * 顯示時要另外向伺服器要 signed URL，不能直接當 <a href> 用）。 */
   evidence_path: string | null;
   note: string | null;
+  /** 2026-08-31 新增：會計核准撥款當下選的撥款方式——cash=現金 /
+   * bank=匯款，NULL＝還沒核准，或核准當下沒選（歷史資料）。給「資金
+   * 總覽」水池分類這筆請款撥款要算進現金池還是銀行池，見 cash-pool.ts。
+   * 送出請款申請的人（業務/員工）不會、也不需要填這欄——實際撥款的是
+   * 會計，這欄是在 reviewRepairItem() 核准的當下才選填，不是建立請款
+   * 當下就有。 */
+  payment_method: CashPoolMethod | null;
   reviewed_at: string | null;
   created_at: string;
+  /** 2026-09-04 新增：核准撥款當下選填指定是從哪個金流帳戶付出去的
+   * （新版多帳戶架構，跟上面 payment_method 現金/銀行並存，不是取代
+   * 關係）。NULL＝尚未指定帳戶（含所有舊資料，或核准時沒選）。 */
+  account_id: string | null;
 }
 
 export type CustomerFollowUpStatus =
@@ -168,6 +376,11 @@ export interface Customer {
   line_id: string | null;
   note: string | null;
   created_at: string;
+  /** 這筆客戶名單歸屬的員工——客戶資料隱私保護用，見
+   * customers-actions.ts／supabase_schema.sql 的 customers RLS policy。
+   * 只有老闆（tenant_admin）看得到別人名下的客戶，一般員工只看得到自己
+   * 建立的客戶（owner_profile_id = 自己）。 */
+  owner_profile_id: string | null;
 }
 
 export type DealStatus = "draft" | "signed" | "delivered";
@@ -182,12 +395,188 @@ export interface Deal {
   final_price: number;
   deposit_amount: number | null;
   balance_amount: number | null;
+  /** 【已棄用，2026-08-31 起改用 deposit_payment_method／
+   * balance_payment_method 分開記錄】舊版「訂金＋尾款合計」共用一種收款
+   * 方式的欄位，保留只是避免遺失歷史資料，新版表單／資金總覽計算不再
+   * 讀寫這個欄位。 */
+  payment_method: CashPoolMethod | null;
+  /** 訂金收款方式：cash=現金 / bank=匯款，NULL=尚未收訂金/未記錄。給
+   * 資金總覽水池分類這筆訂金要算進現金池還是銀行池。 */
+  deposit_payment_method: CashPoolMethod | null;
+  /** 尾款收款方式：cash=現金 / bank=匯款，NULL=尚未收尾款/未記錄。只有
+   * 合約狀態到「已交車」，資金總覽才會把這筆金額算進水池（見
+   * cash-pool.ts）。訂金／尾款分開記錄是因為實務上常常不是同一種付款
+   * 方式（例如訂金收現金、尾款走匯款），舊版單一 payment_method 欄位
+   * 沒辦法反映，會導致現金／銀行水池對不起來。 */
+  balance_payment_method: CashPoolMethod | null;
   loan_status: string | null;
   salesperson_id: string | null;
   /** 這筆合約要撥給 salesperson_id 的預估佣金；只有車行管理員能填寫/修改。 */
   commission_amount: number | null;
   status: DealStatus;
   note: string | null;
+  created_at: string;
+  /** 2026-08-31 新增：合約狀態第一次被標記成 delivered（已交車）的
+   * 時間戳記，在 deals-actions.ts 的 updateDeal() 裡設定一次、之後不會
+   * 再變動。用途：資金總覽「尾款」水池事件原本誤用 created_at（合約
+   * 建立日）當尾款實際收款日，如果合約起算點之前建立、卻是起算點之後
+   * 才交車收尾款，會被誤判成「起算點之前」而算不到——改用這欄才能反映
+   * 尾款真正收到的時間，見 cash-pool.ts。NULL＝這筆合約還沒交車過。 */
+  delivered_at: string | null;
+  /** 2026-09-04 新增：訂金/尾款選填指定是收進哪個金流帳戶（新版多帳戶
+   * 架構，跟上面 deposit_payment_method／balance_payment_method 並存，
+   * 不是取代關係）。NULL＝尚未指定帳戶（含所有舊資料）。 */
+  deposit_account_id: string | null;
+  balance_account_id: string | null;
+}
+
+/** 公司營運開銷（水電/租金/廣告等跟特定車輛無關的固定支出），見
+ * supabase_schema.sql 的 company_expenses 表跟
+ * src/app/dashboard/company-expenses-actions.ts。跟車輛「成本與底價」
+ * 一樣屬於敏感財務資訊，只有 canViewCost 的人看得到／填得到。 */
+export interface CompanyExpense {
+  id: string;
+  tenant_id: string;
+  expense_date: string;
+  category: string;
+  title: string;
+  amount: number;
+  payment_method: string | null;
+  payer_name: string | null;
+  invoice_number: string | null;
+  /** 這筆開銷（主要是「人事薪資」類別）是發給哪位員工的，給「薪資單」
+   * 頁面（payroll-module.tsx）自動加總這個人的底薪用；其餘類別留 null。
+   * 存的是 profiles.id。 */
+  employee_profile_id: string | null;
+  note: string | null;
+  created_at: string;
+  /** 2026-09-04 新增：這筆開銷是從哪個金流帳戶付出去的（新版多帳戶
+   * 架構，見 FinancialAccount／financial-accounts-actions.ts）。跟上面
+   * payment_method（現金/匯款/信用卡）並存，不是取代關係——這欄選填，
+   * NULL 代表尚未指定帳戶（含所有舊資料）。 */
+  account_id: string | null;
+}
+
+/** 金流帳戶（現金／各家銀行帳戶），見 supabase_schema.sql 的
+ * financial_accounts 表跟 src/app/dashboard/financial-accounts-actions.ts。
+ * 附加式設計：不取代舊版 tenants.cash_opening_balance／
+ * bank_opening_balance 那套兩桶式資金總覽，是另外多長出來的新帳本。
+ * 每個車行系統會自動建一個 type="cash" 的預設現金帳戶（不可刪除，只能
+ * 停用），銀行帳戶則由車行自己新增、命名、可以有任意數量。 */
+export interface FinancialAccount {
+  id: string;
+  tenant_id: string;
+  name: string;
+  type: "cash" | "bank";
+  opening_balance: number;
+  is_active: boolean;
+  sort_order: number;
+  note: string | null;
+  created_at: string;
+}
+
+/** 後台鈴鐺通知類型，見 supabase_schema.sql 的 notifications 表跟
+ * src/lib/supabase/notifications.ts 的 createNotification()。 */
+export type NotificationType =
+  | "repair_item_pending"
+  | "company_expense_created"
+  // 2026-09-04 新增：company_expense_created 的對稱事件——刪除一筆公司
+  // 開銷也算「異動」，見 company-expenses-actions.ts 的 deleteCompanyExpense()。
+  | "company_expense_deleted"
+  | "trade_in_request_created"
+  // 2026-08-31 新增：新增車輛入庫時沒有填「底價」——底價屬於成本類敏感
+  // 資訊，員工（負責新增車輛入庫的人）預設看不到、也填不到這個欄位，
+  // 所以改成入庫當下自動發這則通知，提醒會計/老闆回頭補填，見
+  // cars-actions.ts 的 createCar()。
+  | "car_floor_price_missing"
+  // 2026-09-04 新增：安安要求「車籍」異動（上架/下架/預訂/售出這種狀態
+  // 轉換、軟刪除/復原）只要是全車行共用可見的資料就要跳通知，見
+  // cars-actions.ts 的 updateCarStatus() / syncCarStatusFromDeal() /
+  // deleteCar() / restoreCar()。
+  | "car_status_changed"
+  | "car_deleted"
+  | "car_restored"
+  // 2026-09-04 新增：金流帳戶架構——新增/停用一個銀行帳戶會影響全車行
+  // 共用看到的帳戶清單跟收支明細分類，屬於「看得到的都要跳通知」範圍，
+  // 見 financial-accounts-actions.ts。
+  | "financial_account_created"
+  | "financial_account_deactivated";
+
+export interface Notification {
+  id: string;
+  tenant_id: string;
+  type: NotificationType;
+  title: string;
+  message: string;
+  actor_name: string | null;
+  link: string | null;
+  is_read: boolean;
+  created_at: string;
+}
+
+/** 處理狀態——new：剛送出還沒人處理／contacted：業務已聯繫／
+ * closed：已結案（不論成交與否）。跟 CustomerFollowUpStatus 是不同的兩件
+ * 事，這裡只追蹤「這張估價單有沒有被業務處理」。 */
+export type TradeInRequestStatus = "new" | "contacted" | "closed";
+
+/** 車行「影音專區」——貼在抖音/YouTube等平台發布的影片連結，見
+ * supabase_schema.sql 的 tenant_videos 表跟 video-actions.ts。 */
+export interface TenantVideo {
+  id: string;
+  tenant_id: string;
+  title: string | null;
+  video_url: string;
+  sort_order: number;
+  created_at: string;
+}
+
+/** 車行自己手動挑選、貼上的 Google 評論精選小卡（顧客真實評論的原文
+ * 轉貼），顯示在前台看車頁（/inventory）的「顧客怎麼說」區塊——不是即時
+ * 串接 Google API 抓的，見 tenants.google_rating 的說明跟
+ * tenant-reviews-module.tsx。 */
+export interface TenantReview {
+  id: string;
+  tenant_id: string;
+  author_name: string;
+  rating: number;
+  review_text: string;
+  /** 見證照（Google 評論截圖或客人合照），選填，見
+   * storage.ts 的 uploadTenantReviewPhoto()。null 代表沒有配圖。 */
+  photo_url: string | null;
+  sort_order: number;
+  created_at: string;
+}
+
+/** 品牌簡介首頁首圖橫幅相簿——車行自己隨時可以上傳/刪除，前台顯示成
+ * 左右翻頁的相簿（不只單張圖），見 storage.ts 的 uploadTenantHeroPhoto()、
+ * tenant-hero-photos-module.tsx（後台管理 UI）跟 showroom-home-section.tsx
+ * （前台顯示）。結構完全比照 TenantReview／tenant_reviews 表（同樣是
+ * 「車行自己管理的一組排序好的項目清單」），只是欄位更精簡：沒有評論
+ * 文字/星等，只有圖片網址跟排序。車行還沒上傳任何一張的話，前台會自動
+ * 退回舊的單張 tenant.hero_image_url／第一台有照片的車，見
+ * showroom-home-section.tsx 的說明。 */
+export interface TenantHeroPhoto {
+  id: string;
+  tenant_id: string;
+  url: string;
+  sort_order: number;
+  created_at: string;
+}
+
+/** 公開展間「我要估車」表單送出的估價需求單，見 supabase_schema.sql 的
+ * trade_in_requests 表。 */
+export interface TradeInRequest {
+  id: string;
+  tenant_id: string;
+  name: string;
+  phone: string;
+  line_id: string | null;
+  brand: string | null;
+  model_name: string | null;
+  year: number | null;
+  mileage: number | null;
+  note: string | null;
+  status: TradeInRequestStatus;
   created_at: string;
 }
 
@@ -213,6 +602,12 @@ export interface Database {
       customers: Table<Customer>;
       deals: Table<Deal>;
       car_photos: Table<CarPhoto>;
+      company_expenses: Table<CompanyExpense>;
+      notifications: Table<Notification>;
+      trade_in_requests: Table<TradeInRequest>;
+      tenant_videos: Table<TenantVideo>;
+      tenant_reviews: Table<TenantReview>;
+      tenant_hero_photos: Table<TenantHeroPhoto>;
     };
     Views: Record<string, never>;
     Functions: Record<string, never>;

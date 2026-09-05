@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { Car, Customer, Deal, DealStatus } from "@/lib/supabase/types";
+import type { Car, Customer, Deal, DealStatus, FinancialAccount, RepairItem } from "@/lib/supabase/types";
 import { formatCurrency } from "@/lib/format";
 import { DealFormModal } from "./deal-form-modal";
 import { DealContractPreview } from "./deal-contract-preview";
@@ -25,15 +25,31 @@ export function DealsModule({
   cars,
   customers,
   staff,
-  canSetCommission,
+  canManageFinance,
+  canViewFinalCost,
   tenantName,
+  repairItems,
+  financialAccounts,
 }: {
   deals: Deal[];
   cars: Car[];
   customers: Customer[];
   staff: { id: string; name: string | null }[];
-  canSetCommission: boolean;
+  /** 只有老闆／會計（canManageFinance）能填業務抽成、用試算小工具、
+   * 把合約標記成「已交車」——業務只能把合約填到草約/已簽約，交給會計
+   * 結案，見 deal-form-modal.tsx 開頭的說明。 */
+  canManageFinance: boolean;
+  /** 2026-08-31 新增：比 canManageFinance 更嚴格——只有會計/老闆
+   * （accountant/tenant_admin）能看到「成本細項」裡底價與收購進價的
+   * 差額，見 deal-form-modal.tsx 開頭的說明跟 permissions.ts 對
+   * canViewFinalCost 的說明。 */
+  canViewFinalCost: boolean;
   tenantName?: string;
+  /** 給「業務薪水試算小工具」算選中車輛的已核准整備費用，見
+   * deal-form-modal.tsx 開頭的說明。 */
+  repairItems: RepairItem[];
+  /** 2026-09-04 新增：訂金/尾款選帳戶用，見 deal-form-modal.tsx。 */
+  financialAccounts: FinancialAccount[];
 }) {
   const [modalState, setModalState] = useState<ModalState>(null);
   const [previewDeal, setPreviewDeal] = useState<Deal | null>(null);
@@ -137,7 +153,10 @@ export function DealsModule({
           cars={cars}
           customers={customers}
           staff={staff}
-          canSetCommission={canSetCommission}
+          canManageFinance={canManageFinance}
+          canViewFinalCost={canViewFinalCost}
+          repairItems={repairItems}
+          financialAccounts={financialAccounts}
           onClose={() => setModalState(null)}
         />
       )}

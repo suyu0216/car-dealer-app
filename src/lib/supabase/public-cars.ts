@@ -10,8 +10,11 @@
 // cars_public_showroom_read / car_photos_public_showroom_read 這兩條
 // policy，兩邊的條件（is_public / status 白名單 / deleted_at is null）
 // 要保持一致，任何一邊調整都要記得同步另一邊。
+import type { Metadata } from "next";
 import type { createClient } from "./server";
 import type { Car } from "./types";
+import type { ShowroomTenant } from "./public-tenant";
+import { carDisplayName, formatCurrency, formatNumber } from "@/lib/format";
 
 type SupabaseServerClient = Awaited<ReturnType<typeof createClient>>;
 
@@ -31,6 +34,10 @@ export type ShowroomCar = Pick<
   | "color"
   | "selling_price"
   | "image_url"
+  | "created_at"
+  | "body_type"
+  | "is_featured"
+  | "is_large_card"
 >;
 
 /**
@@ -48,8 +55,17 @@ export const PUBLIC_SHOWROOM_STATUSES = ["in_stock", "reserved"] as const;
 // 除了原本的卡片欄位，加上車輛詳情用的規格欄位（領牌年份/里程/排氣量/
 // 傳動）——一樣是不涉及任何內部帳務的公開規格，跟後台列印展示卡
 // （car-detail-modal.tsx 的 PrintSpec）給客人看的資訊同一個等級。
+// created_at 是給前台「近期上架」標籤用的（見 showroom-grid.tsx）——只是
+// 這輛車「什麼時候被加進系統」的時間戳記，不是財務欄位，公開沒有安全
+// 疑慮；標籤本身用真實資料，不是憑空捏造的「熱門/搶購」假訊息。
+// body_type（車型分類）／is_featured（熱門推薦）給前台展間頁上方的分類
+// 選單用——is_featured 是後台手動開關的真實資料，不是系統自動判斷，
+// 跟上面「近期上架」標籤同一個原則：不寫憑空捏造的熱門/搶購假訊息。
+// is_large_card（大圖卡）——2026-08 新增，使用者要求「現有車輛」頁哪些
+// 車要用大圖廣告卡呈現要能自己設定，見 showroom-grid.tsx／
+// showroom-cars-section.tsx 對這個欄位的說明。
 const SHOWROOM_CAR_COLUMNS =
-  "id, brand, model_name, year, license_year, mileage, engine_cc, transmission, color, selling_price, image_url";
+  "id, brand, model_name, year, license_year, mileage, engine_cc, transmission, color, selling_price, image_url, created_at, body_type, is_featured, is_large_card";
 
 /**
  * 車輛列表／詳情頁共用的查詢起點：只回傳「這個車行、公開展示、待售中或
@@ -68,6 +84,29 @@ export function publicShowroomCarsQuery(supabase: SupabaseServerClient, tenantId
     .eq("tenant_id", tenantId)
     .eq("is_public", true)
     .in("status", PUBLIC_SHOWROOM_STATUSES)
+    .is("deleted_at", null);
+}
+
+/**
+ * 「成交案例／已售出」展示區塊用——查詢已售出（status = 'sold'）的公開
+ * 車輛，做信任背書用途。跟 publicShowroomCarsQuery() 用同一組安全欄位
+ * 白名單（SHOWROOM_CAR_COLUMNS），特別注意這裡「不」select final_price／
+ * closed_total_cost 等結帳欄位——成交案例只是展示用途，不需要（也不該）
+ * 對外公開實際成交金額，前台畫面改顯示「已成功交車」文字而不是價格，見
+ * showroom-page.tsx 的成交案例區塊。
+ *
+ * 依賴 supabase_schema.sql 的 cars_public_showroom_read policy 2026-08
+ * 已放行 status = 'sold'（原本只允許 in_stock/reserved），這裡才查得到；
+ * 這條 policy 沒放行的話，這支查詢一律回傳空陣列，不會出錯但也看不到
+ * 任何資料。
+ */
+export function publicShowroomSoldCarsQuery(supabase: SupabaseServerClient, tenantId: string) {
+  return supabase
+    .from("cars")
+    .select(SHOWROOM_CAR_COLUMNS)
+    .eq("tenant_id", tenantId)
+    .eq("is_public", true)
+    .eq("status", "sold")
     .is("deleted_at", null);
 }
 
@@ -91,4 +130,84 @@ export function publicShowroomPhotosQuery(supabase: SupabaseServerClient, carIds
     .select("car_id, url, sort_order")
     .in("car_id", carIds)
     .order("sort_order", { ascending: true });
+}
+
+/**
+ * 2026-09-05 SEO 優化新增：「現有車輛」頁帶 `?car=<id>` 深連結（打開某一
+ * 台車的詳情 Modal）時，用這支組出這台車專屬的標題/描述/分享卡片圖片，
+ * 取代原本整頁只有一句「現有車輛」通用標題的狀況——這樣客人分享某一台車
+ * 的連結出去，LINE/Facebook 才會正確顯示這台車的名稱跟照片，而不是整個
+ * 展間的通用介紹；Google 也才有機會針對「特定車款」的搜尋把這個網址
+ * 收錄進來，而不是只收錄到一句籠統的「現有車輛」。
+ *
+ * 刻意不另外開一個新路由（例如 /inventory/cars/[carId]）——現有的
+ * `?car=` 深連結本來就是一個可以直接分享、Google 可以爬到的完整網址，
+ * 只是內容（標題/描述/結構化資料）原本沒有跟著這個參數變動；用同一個
+ * 網址把內容補齊，是風險最低、改動範圍最小的做法，不需要更動既有的
+ * Modal 互動設計或任何現有連結。
+ */
+export function buildCarMetadata(tenant: ShowroomTenant, car: ShowroomCar, photoUrl: string | null): Metadata {
+  const name = carDisplayName(car);
+  const title = `${name}｜${tenant.name}`;
+  const priceText = car.selling_price != null ? `，${formatCurrency(car.selling_price)}` : "";
+  const mileageText = car.mileage != null ? `，里程 ${formatNumber(car.mileage)} km` : "";
+  const description = `${name}${priceText}${mileageText}。${tenant.name}${
+    tenant.address ? `，${tenant.address}` : ""
+  }，歡迎預約賞車。`;
+  const image = photoUrl || car.image_url || tenant.hero_image_url || tenant.logo_url || null;
+
+  return {
+    title,
+    description,
+    openGraph: {
+      title,
+      description,
+      type: "website",
+      ...(image ? { images: [{ url: image }] } : {}),
+    },
+    twitter: {
+      card: image ? "summary_large_image" : "summary",
+      title,
+      description,
+      ...(image ? { images: [image] } : {}),
+    },
+  };
+}
+
+/**
+ * 同一台車的 Schema.org 結構化資料（JSON-LD，`@type: "Car"`）——只放車輛
+ * 本身已經有值的欄位，沒填的欄位整個省略，不寫假資料湊格式（跟
+ * buildShowroomMetadata() 的 AutoDealer 結構化資料同一個原則）。
+ */
+export function buildCarStructuredData(
+  tenant: ShowroomTenant,
+  car: ShowroomCar,
+  photoUrl: string | null
+): Record<string, unknown> {
+  const image = photoUrl || car.image_url;
+  return {
+    "@context": "https://schema.org",
+    "@type": "Car",
+    name: carDisplayName(car),
+    ...(car.brand ? { brand: { "@type": "Brand", name: car.brand } } : {}),
+    ...(car.model_name ? { model: car.model_name } : {}),
+    ...(car.year ? { vehicleModelDate: String(car.year) } : {}),
+    ...(car.mileage != null
+      ? { mileageFromOdometer: { "@type": "QuantitativeValue", value: car.mileage, unitCode: "KMT" } }
+      : {}),
+    ...(car.color ? { color: car.color } : {}),
+    ...(car.transmission ? { vehicleTransmission: car.transmission } : {}),
+    ...(image ? { image } : {}),
+    ...(car.selling_price != null
+      ? {
+          offers: {
+            "@type": "Offer",
+            price: car.selling_price,
+            priceCurrency: "TWD",
+            availability: "https://schema.org/InStock",
+            seller: { "@type": "AutoDealer", name: tenant.name },
+          },
+        }
+      : {}),
+  };
 }

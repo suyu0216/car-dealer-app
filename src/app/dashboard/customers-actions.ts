@@ -69,9 +69,13 @@ export async function createCustomer(
   }
 
   const supabase = await createClient();
+  // owner_profile_id 一律填目前登入者，不開放前端表單自己指定——客戶
+  // 資料隱私保護（見 supabase_schema.sql 的 customers RLS policy）要靠
+  // 這欄準確反映「這筆客戶名單真的是誰開發、建立的」，不能讓使用者假冒
+  // 別人名下建立客戶。
   const { error } = await supabase
     .from("customers")
-    .insert({ ...values, tenant_id: profile.tenant_id! });
+    .insert({ ...values, tenant_id: profile.tenant_id!, owner_profile_id: profile.id });
 
   if (error) {
     return { error: `新增客戶失敗：${error.message}` };

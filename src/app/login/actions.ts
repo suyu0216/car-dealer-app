@@ -32,6 +32,21 @@ function translateSignupError(message: string): string {
   return known[message] ?? `註冊失敗：${message}`;
 }
 
+/** 把 Supabase 登入錯誤轉成中文，不把內部錯誤代碼/訊息暴露給使用者
+ * （原本這裡有一段 `[TEMP DEBUG] ...` 忘記移除的除錯輸出，會把 Supabase
+ * Auth 的內部錯誤名稱/HTTP 狀態碼/原文訊息直接顯示給任何嘗試登入的人，
+ * 已經拿掉——詳細錯誤只寫進 server log，前端一律看到籠統的中文提示，
+ * 避免洩漏系統內部細節、也避免被用來判斷帳號是否存在）。 */
+function translateLoginError(message: string): string {
+  if (/email not confirmed/i.test(message)) {
+    return "這個帳號的 Email 尚未完成驗證，請先到信箱點擊驗證連結。";
+  }
+  if (/rate limit|after \d+ seconds|security purposes/i.test(message)) {
+    return "登入嘗試太頻繁，請稍等一下再試一次。";
+  }
+  return "帳號或密碼錯誤，請重新輸入。";
+}
+
 /** 把常見的 Supabase 重寄驗證信錯誤訊息轉成中文，其餘原樣顯示。 */
 function translateResendError(message: string): string {
   if (/already.*confirmed/i.test(message)) {
@@ -65,7 +80,10 @@ export async function login(
   });
 
   if (error || !data.user) {
-    return { error: `[TEMP DEBUG] ${error?.name ?? "no-error"} / ${error?.status ?? "?"} / ${error?.message ?? "no user"}` };
+    if (error) {
+      console.error("登入失敗：", error.name, error.status, error.message);
+    }
+    return { error: translateLoginError(error?.message ?? "") };
   }
 
   const { data: profile } = await supabase

@@ -4,8 +4,8 @@ import { createClient } from "@/lib/supabase/server";
 import { LogoutButton } from "@/app/_components/logout-button";
 import { AppTopBar } from "@/app/_components/app-top-bar";
 import { TenantStatusCell } from "./_components/tenant-status-cell";
-import { formatCurrency } from "@/lib/format";
-import type { Car, Tenant, Transaction } from "@/lib/supabase/types";
+import { formatCurrency, formatDate } from "@/lib/format";
+import type { Car, CompanyExpense, Deal, Tenant } from "@/lib/supabase/types";
 
 const STATUS_LABEL: Record<Car["status"], string> = {
   preparing: "整備中",
@@ -22,19 +22,32 @@ interface TenantStat {
   net: number;
 }
 
+// 「收入」讀「已交車」合約的成交價，「支出」讀公司會計的營運開銷紀錄——
+// 這兩張表才是實際在用、有真的資料寫入的來源。舊版這裡讀的是
+// `transactions` 這張表，但全站沒有任何地方會寫入它，數字永遠是 0，
+// 完全沒反映過任何車行的實際營收，是誤導平台管理員的死資料。
+
 export default async function SuperAdminPage({
   searchParams,
 }: PageProps<"/super-admin">) {
   // 驗證登入身份並確認角色為 super_admin；否則導回一般車商後台。
   await requireSuperAdmin();
 
-  const { tenant: selectedTenantId } = await searchParams;
+  // searchParams 的值型別是 string | string[] | undefined（網址上同一個
+  // key 出現兩次的話 Next.js 會回傳陣列）——下面好幾個地方拿
+  // selectedTenantId 當 Map.get() 的 key 或做 === 比對，都需要單一字串，
+  // 這裡先正規化成 string | undefined，只取第一個值，避免型別檢查失敗、
+  // 也避免萬一網址真的帶了重複的 tenant 參數時比對邏輯悄悄失效。
+  const { tenant: rawSelectedTenantId } = await searchParams;
+  const selectedTenantId = Array.isArray(rawSelectedTenantId)
+    ? rawSelectedTenantId[0]
+    : rawSelectedTenantId;
 
   // super_admin 的 RLS policy 允許讀取所有租戶的資料，
   // 因此這裡可以一次撈出全部車行、車輛、收支紀錄再彙總。
   const supabase = await createClient();
 
-  const [{ data: tenants }, { data: cars }, { data: transactions }] =
+  const [{ data: tenants }, { data: cars }, { data: deals }, { data: expenses }] =
     await Promise.all([
       supabase
         .from("tenants")
@@ -46,23 +59,40 @@ export default async function SuperAdminPage({
           "id, tenant_id, brand, model_name, year, mileage, license_plate, color, status, purchase_price, selling_price, floor_price, created_at"
         ),
       supabase
-        .from("transactions")
-        .select("id, tenant_id, car_id, date, type, category, amount, note"),
+        .from("deals")
+        .select("id, tenant_id, car_id, customer_name, final_price, status, created_at"),
+      supabase
+        .from("company_expenses")
+        .select("id, tenant_id, expense_date, category, title, amount"),
     ]);
 
   const tenantList = (tenants ?? []) as Tenant[];
   const carList = (cars ?? []) as Car[];
-  const txList = (transactions ?? []) as Transaction[];
+  const dealList = (deals ?? []) as Pick<
+    Deal,
+    "id" | "tenant_id" | "car_id" | "customer_name" | "final_price" | "status" | "created_at"
+  >[];
+  const expenseList = (expenses ?? []) as Pick<
+    CompanyExpense,
+    "id" | "tenant_id" | "expense_date" | "category" | "title" | "amount"
+  >[];
+
+  // 收入只算「已交車」的合約——draft/signed 都還沒真的成交，算進去會
+  // 高估還沒到手的營收。
+  const deliveredDealsByTenant = new Map<string, typeof dealList>();
+  for (const deal of dealList) {
+    if (deal.status !== "delivered") continue;
+    const list = deliveredDealsByTenant.get(deal.tenant_id) ?? [];
+    list.push(deal);
+    deliveredDealsByTenant.set(deal.tenant_id, list);
+  }
 
   const stats: TenantStat[] = tenantList.map((tenant) => {
     const tenantCars = carList.filter((c) => c.tenant_id === tenant.id);
-    const tenantTx = txList.filter((t) => t.tenant_id === tenant.id);
-    const income = tenantTx
-      .filter((t) => t.type === "income")
-      .reduce((sum, t) => sum + Number(t.amount), 0);
-    const expense = tenantTx
-      .filter((t) => t.type === "expense")
-      .reduce((sum, t) => sum + Number(t.amount), 0);
+    const tenantDeliveredDeals = deliveredDealsByTenant.get(tenant.id) ?? [];
+    const tenantExpenses = expenseList.filter((e) => e.tenant_id === tenant.id);
+    const income = tenantDeliveredDeals.reduce((sum, d) => sum + Number(d.final_price), 0);
+    const expense = tenantExpenses.reduce((sum, e) => sum + Number(e.amount), 0);
 
     return {
       tenant,
@@ -86,8 +116,11 @@ export default async function SuperAdminPage({
   const detailCars = selectedTenantId
     ? carList.filter((c) => c.tenant_id === selectedTenantId)
     : [];
-  const detailTx = selectedTenantId
-    ? txList.filter((t) => t.tenant_id === selectedTenantId)
+  const detailDeliveredDeals = selectedTenantId
+    ? (deliveredDealsByTenant.get(selectedTenantId) ?? [])
+    : [];
+  const detailExpenses = selectedTenantId
+    ? expenseList.filter((e) => e.tenant_id === selectedTenantId)
     : [];
 
   return (
@@ -242,40 +275,81 @@ export default async function SuperAdminPage({
             </table>
           </div>
 
-          <div className="mt-6 overflow-x-auto rounded-lg border border-neutral-200 dark:border-neutral-800">
-            <table className="w-full text-left text-sm">
-              <thead className="bg-neutral-50 text-neutral-500 dark:bg-neutral-900">
-                <tr>
-                  <th className="px-4 py-2 font-medium">日期</th>
-                  <th className="px-4 py-2 font-medium">類型</th>
-                  <th className="px-4 py-2 font-medium">類別</th>
-                  <th className="px-4 py-2 font-medium">金額</th>
-                  <th className="px-4 py-2 font-medium">備註</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-neutral-100 dark:divide-neutral-800">
-                {detailTx.length === 0 && (
-                  <tr>
-                    <td colSpan={5} className="px-4 py-6 text-center text-neutral-400">
-                      尚無收支紀錄
-                    </td>
-                  </tr>
-                )}
-                {detailTx.map((tx) => (
-                  <tr key={tx.id}>
-                    <td className="px-4 py-2 text-neutral-500">
-                      {new Date(tx.date).toLocaleDateString("zh-TW")}
-                    </td>
-                    <td className="px-4 py-2">
-                      {tx.type === "income" ? "收入" : "支出"}
-                    </td>
-                    <td className="px-4 py-2">{tx.category}</td>
-                    <td className="px-4 py-2">{formatCurrency(tx.amount)}</td>
-                    <td className="px-4 py-2 text-neutral-500">{tx.note ?? "—"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
+            <div>
+              <h3 className="text-sm font-semibold text-neutral-700 dark:text-neutral-300">
+                收入 — 已交車合約
+              </h3>
+              <div className="mt-2 overflow-x-auto rounded-lg border border-neutral-200 dark:border-neutral-800">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-neutral-50 text-neutral-500 dark:bg-neutral-900">
+                    <tr>
+                      <th className="px-4 py-2 font-medium">日期</th>
+                      <th className="px-4 py-2 font-medium">客戶</th>
+                      <th className="px-4 py-2 font-medium">成交價</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-neutral-100 dark:divide-neutral-800">
+                    {detailDeliveredDeals.length === 0 && (
+                      <tr>
+                        <td colSpan={3} className="px-4 py-6 text-center text-neutral-400">
+                          尚無已交車的合約
+                        </td>
+                      </tr>
+                    )}
+                    {detailDeliveredDeals.map((deal) => (
+                      <tr key={deal.id}>
+                        <td className="px-4 py-2 text-neutral-500">
+                          {formatDate(deal.created_at)}
+                        </td>
+                        <td className="px-4 py-2">{deal.customer_name}</td>
+                        <td className="px-4 py-2">{formatCurrency(deal.final_price)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div>
+              <h3 className="text-sm font-semibold text-neutral-700 dark:text-neutral-300">
+                支出 — 公司會計記帳
+              </h3>
+              <div className="mt-2 overflow-x-auto rounded-lg border border-neutral-200 dark:border-neutral-800">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-neutral-50 text-neutral-500 dark:bg-neutral-900">
+                    <tr>
+                      <th className="px-4 py-2 font-medium">日期</th>
+                      <th className="px-4 py-2 font-medium">項目</th>
+                      <th className="px-4 py-2 font-medium">金額</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-neutral-100 dark:divide-neutral-800">
+                    {detailExpenses.length === 0 && (
+                      <tr>
+                        <td colSpan={3} className="px-4 py-6 text-center text-neutral-400">
+                          尚無支出紀錄
+                        </td>
+                      </tr>
+                    )}
+                    {detailExpenses.map((expense) => (
+                      <tr key={expense.id}>
+                        <td className="px-4 py-2 text-neutral-500">
+                          {formatDate(expense.expense_date)}
+                        </td>
+                        <td className="px-4 py-2">
+                          {expense.title}
+                          <span className="ml-1.5 text-xs text-neutral-400">
+                            {expense.category}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2">{formatCurrency(expense.amount)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </div>
         </section>
       )}

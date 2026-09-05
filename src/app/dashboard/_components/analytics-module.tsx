@@ -1,25 +1,39 @@
 import type { Car, Deal, RepairItem } from "@/lib/supabase/types";
-import { formatCurrency } from "@/lib/format";
+import { formatCurrency, formatNumber, taiwanDateParts } from "@/lib/format";
 
 function daysBetween(a: Date, b: Date) {
   return Math.round((b.getTime() - a.getTime()) / (1000 * 60 * 60 * 24));
 }
 
+// 「本月/今年」一律用台灣時間判斷，不是程式碼實際執行環境（伺服器/瀏覽器）
+// 的系統時區——見 src/lib/format.ts 的 taiwanDateParts() 說明。
 function isThisMonth(iso: string, now: Date) {
-  const d = new Date(iso);
-  return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+  const a = taiwanDateParts(iso);
+  const b = taiwanDateParts(now);
+  return a.year === b.year && a.month === b.month;
 }
+
+const MONTH_LABELS = ["1月", "2月", "3月", "4月", "5月", "6月", "7月", "8月", "9月", "10月", "11月", "12月"];
 
 export function AnalyticsModule({
   cars,
   repairItems,
   deals,
   staff,
+  canViewCommission,
 }: {
   cars: Car[];
   repairItems: RepairItem[];
   deals: Deal[];
   staff: { id: string; name: string | null }[];
+  /** 業務抽成隱私保護：「已實現總毛利/淨利」原本直接讀 closed_total_cost
+   * 快照，這個快照本身已經把業務抽成算進成本裡，等於把抽成金額間接
+   * 洩漏給任何看得到這張看板的人（毛利數字反推回去就能算出抽成）。
+   * 只有 canViewAllSalary（看得到全體薪資）或 canManageFinance（管理
+   * 財務）的人才看得到含抽成的真實淨利，其他人看到的數字會把抽成
+   * 加回毛利、並在標籤上註明「不含業務抽成」，見 car-card.tsx／
+   * car-maintenance-tab.tsx 同一套隱私保護邏輯。 */
+  canViewCommission: boolean;
 }) {
   const now = new Date();
 
@@ -37,15 +51,21 @@ export function AnalyticsModule({
     );
   }
   const livePrepCost = (car: Car) => approvedPrepCostByCar.get(car.id) ?? 0;
+  // 2026-08-30 修正：這裡原本漏加 car.tax_amount（稅金/發票稅金）——跟
+  // car-maintenance-tab.tsx、cars-kpi.tsx 是同一批修正，理由見那兩個
+  // 檔案裡的說明：車輛結帳封存當下（closed_total_cost）本來就有把稅金
+  // 算進去，這裡（車輛還在庫、即時計算）漏了，導致同一輛車賣出前後的
+  // 總成本數字會不一致。
   const liveTotalCost = (car: Car) =>
-    Number(car.purchase_price) + livePrepCost(car) + Number(car.transfer_fee ?? 0);
+    Number(car.purchase_price) + livePrepCost(car) + Number(car.transfer_fee ?? 0) + Number(car.tax_amount ?? 0);
 
   const inventoryCount = inventoryCars.length;
   const inventoryAssetCost = inventoryCars.reduce((sum, c) => sum + liveTotalCost(c), 0);
   const inventorySpentPrepCost = inventoryCars.reduce((sum, c) => sum + livePrepCost(c), 0);
-  const inventoryEstimatedMargin = inventoryCars
-    .filter((c) => c.selling_price != null)
-    .reduce((sum, c) => sum + (Number(c.selling_price) - liveTotalCost(c)), 0);
+  // 2026-08-29：「場內預估毛利」這張卡片依使用者要求拿掉——車輛都還沒賣出
+  // 就先估一個「假設現在開價全部賣掉」的毛利數字，容易被誤讀成已經確定
+  // 能賺到的錢，跟下面卡片二「已實現總毛利/淨利」（只算真的結帳賣出的
+  // 車輛）放在同一個看板上反而容易混淆，所以移除，不再計算這個估算值。
 
   // ---------------------------------------------------------------------
   // 卡片二：本月已結案銷售績效 —— 只看「已結帳」的車輛（closed_at 非
@@ -61,7 +81,11 @@ export function AnalyticsModule({
 
   const realizedProfitThisMonth = closedThisMonthCars.reduce((sum, c) => {
     const revenue = c.final_price ?? c.selling_price ?? 0;
-    const cost = Number(c.closed_total_cost ?? 0);
+    // closed_total_cost 快照本身已經把業務抽成算進成本——沒有
+    // canViewCommission 權限的人，這裡要把抽成從成本裡扣掉（也就是把
+    // 毛利加回來），不然毛利數字本身就會間接洩漏抽成金額。
+    const commissionCost = Number(c.closed_commission_cost ?? 0);
+    const cost = Number(c.closed_total_cost ?? 0) - (canViewCommission ? 0 : commissionCost);
     return sum + (Number(revenue) - cost);
   }, 0);
 
@@ -94,6 +118,29 @@ export function AnalyticsModule({
     .sort((a, b) => b.total - a.total)
     .slice(0, 5);
 
+  // ---------------------------------------------------------------------
+  // 卡片三：年度整備／維修開銷 —— 只算「已核准撥款」的維修請款
+  // （repair_items.status === 'approved'，待審核/已退回不算真的花出去的
+  // 錢），依審核通過日期（reviewed_at；缺這個時間戳的舊資料退回用
+  // created_at，避免整筆從圖表消失）分月加總，看得出每個月維修支出的
+  // 趨勢，不只是單月數字。
+  // ---------------------------------------------------------------------
+  const currentYear = taiwanDateParts(now).year;
+  // taiwanDateParts().month 是 1-12（不是 JS Date 慣用的 0-based），這裡
+  // 減 1 換成陣列 index，跟下面 monthlyRepairCost[月 - 1] 是同一套換算。
+  const currentMonthIndex = taiwanDateParts(now).month - 1;
+  const approvedThisYear = repairItems.filter((r) => {
+    if (r.status !== "approved") return false;
+    return taiwanDateParts(r.reviewed_at ?? r.created_at).year === currentYear;
+  });
+  const monthlyRepairCost = Array.from({ length: 12 }, () => 0);
+  for (const item of approvedThisYear) {
+    const month = taiwanDateParts(item.reviewed_at ?? item.created_at).month;
+    monthlyRepairCost[month - 1] += Number(item.amount);
+  }
+  const yearlyRepairTotal = monthlyRepairCost.reduce((sum, v) => sum + v, 0);
+  const maxMonthlyRepairCost = Math.max(1, ...monthlyRepairCost);
+
   return (
     <section className="space-y-5">
       <h2 className="text-base font-semibold text-neutral-800">車行經營數據看板</h2>
@@ -107,15 +154,10 @@ export function AnalyticsModule({
         <p className="mt-0.5 text-xs text-neutral-400">
           僅統計待售中／整備中／已預訂的車輛，即時計算
         </p>
-        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
           <Stat label="場內台數" value={`${inventoryCount} 輛`} />
           <Stat label="場內在庫總資產" value={formatCurrency(inventoryAssetCost)} />
           <Stat label="已花整備費" value={formatCurrency(inventorySpentPrepCost)} />
-          <Stat
-            label="場內預估毛利"
-            value={formatCurrency(inventoryEstimatedMargin)}
-            tone={inventoryEstimatedMargin >= 0 ? "positive" : "negative"}
-          />
         </div>
       </div>
 
@@ -131,7 +173,7 @@ export function AnalyticsModule({
         <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
           <Stat label="本月成交台數" value={`${soldThisMonthCount} 輛`} />
           <Stat
-            label="已實現總毛利/淨利"
+            label={canViewCommission ? "已實現總毛利/淨利" : "已實現總毛利/淨利（不含業務抽成）"}
             value={formatCurrency(realizedProfitThisMonth)}
             tone={realizedProfitThisMonth >= 0 ? "positive" : "negative"}
           />
@@ -168,6 +210,42 @@ export function AnalyticsModule({
             </ol>
           )}
         </div>
+      </div>
+
+      {/* 🛠️ 年度整備／維修開銷 */}
+      <div className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
+        <div className="flex items-center gap-2">
+          <span aria-hidden>🛠️</span>
+          <h3 className="text-sm font-semibold text-neutral-800">{currentYear} 年度整備／維修開銷</h3>
+        </div>
+        <p className="mt-0.5 text-xs text-neutral-400">
+          僅統計已核准撥款的維修請款，依審核通過月份分月加總
+        </p>
+
+        <div className="mt-4">
+          <Stat label={`${currentYear} 年累計已撥款`} value={formatCurrency(yearlyRepairTotal)} />
+        </div>
+
+        {yearlyRepairTotal === 0 ? (
+          <p className="mt-4 text-sm text-neutral-400">今年還沒有已核准撥款的維修請款紀錄</p>
+        ) : (
+          <div className="mt-4 flex items-end gap-1.5 sm:gap-2">
+            {monthlyRepairCost.map((amount, i) => (
+              <div key={i} className="flex flex-1 flex-col items-center gap-1">
+                <span className="text-[10px] tabular-nums text-neutral-400">
+                  {amount > 0 ? formatNumber(Math.round(amount / 1000)) + "k" : ""}
+                </span>
+                <div
+                  className={
+                    "w-full rounded-t-md " + (i === currentMonthIndex ? "bg-[#BFA074]" : "bg-[#E7DAC3]")
+                  }
+                  style={{ height: `${Math.max(4, (amount / maxMonthlyRepairCost) * 96)}px` }}
+                />
+                <span className="text-[10px] text-neutral-400">{MONTH_LABELS[i]}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </section>
   );
