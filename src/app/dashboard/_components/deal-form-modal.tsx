@@ -131,6 +131,16 @@ export function DealFormModal({
   const commissionInputRef = useRef<HTMLInputElement>(null);
 
   const selectedCar = useMemo(() => cars.find((c) => c.id === carId) ?? null, [cars, carId]);
+  // 2026-09-06 新增：安安反映「已成交」的車輛不該再出現在「新增合約」的
+  // 選定車輛清單裡——這台車已經賣掉了，不該讓業務不小心又對同一台車開
+  // 一張新合約。同時把軟刪除（deleted_at）的車輛也排除掉——這裡原本沒
+  // 做這層過濾，一併補上，理由跟其他清單排除軟刪除車輛一樣。只影響
+  // 「新增合約」這個下拉選單本身能不能選到，不影響任何車輛既有的合約/
+  // 狀態，編輯既有合約（mode === "edit"）維持唯讀顯示，不受這裡影響。
+  const availableCarsForNewDeal = useMemo(
+    () => cars.filter((c) => c.status !== "sold" && !c.deleted_at),
+    [cars]
+  );
   // 2026-09-06 新增：「收購獎金」欄位要顯示這台車入庫時記錄的收購／採購人
   // 姓名（cars.purchased_by 存的是 profile id，不是姓名），跟下面
   // 「承辦業務」下拉選單共用同一份 staff 名單，不用另外查一次。
@@ -291,9 +301,9 @@ export function DealFormModal({
                 className={INPUT_CLASS}
               >
                 <option value="" disabled>
-                  請選擇車輛
+                  {availableCarsForNewDeal.length === 0 ? "目前沒有可以新增合約的車輛" : "請選擇車輛"}
                 </option>
-                {cars.map((c) => (
+                {availableCarsForNewDeal.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.brand ? `${c.brand} ` : ""}
                     {c.model_name}
@@ -301,7 +311,13 @@ export function DealFormModal({
                   </option>
                 ))}
               </select>
-            ) : (
+            ) : null}
+            {mode === "create" && (
+              <p className="mt-1 text-xs text-neutral-400">
+                已成交（已售出）的車輛不會出現在這裡，避免對同一台車重複開合約；如果是要訂正已成交合約的資料，請到「買賣合約與交易」列表裡編輯那張既有的合約。
+              </p>
+            )}
+            {mode !== "create" && (
               // 2026-08-30：合約建立之後，車輛不可再被改成別台——這裡改成
               // 唯讀顯示＋隱藏欄位固定送出原本的 car_id，不給互動式下拉選單，
               // 前端這層是防呆；真正擋住惡意繞過前端直接改 car_id 的防線在
