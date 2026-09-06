@@ -18,8 +18,8 @@
 // 獎金」，避免從毛利數字反推出這兩筆金額。
 //
 // 2026-09-06 新增：安安反映儀表板要能一眼看到「已結帳哪幾台車」，不是
-// 只看總數字——新增「本月已結帳車輛」小清單卡片，跟上面 soldThisMonthCount
-// 用同一批 closedThisMonthCars 資料，不用另外查。另外，安安也反映「公司
+// 只看總數字——新增「已結帳車輛」小清單卡片，跟上面 soldInRangeCount
+// 用同一批 closedInRangeCars 資料，不用另外查。另外，安安也反映「公司
 // 淨利」希望多一種算法：不是拿實際收購價（購買時可能因為議價空間談高／
 // 談低）當成本，而是拿「底價」（floor_price，車輛入庫時設定的目標收購
 // 上限）當成本基準去算淨利——這樣算出來的數字比較能反映「照計畫的底價
@@ -31,8 +31,19 @@
 // 這個算法故意跟「單台車結算報表」（最終成本表，見 car-settlement-
 // report.tsx）用同一套公式——安安希望能先在最終成本表逐台核對金額，
 // 確認無誤後儀表板加總的數字才會跟她核對過的一致，不是另外兩套各算各的。
+//
+// 2026-09-06（第二次）新增：安安反映每間店結帳週期的算法不一樣，不一定
+// 是嚴格的日曆月（例如每月 26 號到隔月 25 號）——上面這幾張「已結帳」
+// 相關卡片（營業額／毛利／底價基準淨利／已結帳車輛清單／成交台數）改
+// 成可以自己選日期區間，預設「本月」（日曆月，跟原本行為一致），可以
+// 切換成「上月」「全部」或自訂起訖日。跟「報表分析」幾個報表共用同一套
+// DateRangeFilter／resolveRange／isInRange（見 report-date-range.ts），
+// 不是另外寫一套算法。
+import { useState } from "react";
 import type { Car, Customer, Deal, RepairItem, TradeInRequest } from "@/lib/supabase/types";
-import { carDisplayName, formatCurrency, formatDate, taiwanDateParts } from "@/lib/format";
+import { carDisplayName, formatCurrency, formatDate, taiwanDateParts, currentTaiwanDateKey } from "@/lib/format";
+import { type DateRangePreset, resolveRange, isInRange } from "@/lib/report-date-range";
+import { DateRangeFilter } from "./reports/date-range-filter";
 import {
   IconInventory,
   IconWrench,
@@ -46,6 +57,15 @@ function isThisMonth(iso: string, now: Date) {
   const a = taiwanDateParts(iso);
   const b = taiwanDateParts(now);
   return a.year === b.year && a.month === b.month;
+}
+
+/** 「已結帳」卡片群組要顯示的區間文字——預設「本月」跟改版前看起來
+ *一樣，選了別的 preset 才會變成「上月」「全部區間」或實際自訂日期。 */
+function rangeLabel(preset: DateRangePreset, customStart: string, customEnd: string): string {
+  if (preset === "thisMonth") return "本月";
+  if (preset === "lastMonth") return "上月";
+  if (preset === "all") return "全部區間";
+  return `${customStart || "起"}～${customEnd || "訖"}`;
 }
 
 export function OverviewModule({
@@ -83,6 +103,15 @@ export function OverviewModule({
 }) {
   const now = new Date();
 
+  // 2026-09-06 新增：「已結帳」卡片群組的日期區間——預設「本月」（日曆
+  // 月），跟改版前行為一致；可以切換成「上月」「全部」或自訂起訖日，
+  // 給結帳週期不是日曆月的店家用，見檔案開頭的說明。
+  const [rangePreset, setRangePreset] = useState<DateRangePreset>("thisMonth");
+  const [rangeCustomStart, setRangeCustomStart] = useState(() => currentTaiwanDateKey());
+  const [rangeCustomEnd, setRangeCustomEnd] = useState(() => currentTaiwanDateKey());
+  const closedRange = resolveRange(rangePreset, rangeCustomStart, rangeCustomEnd);
+  const closedRangeLabel = rangeLabel(rangePreset, rangeCustomStart, rangeCustomEnd);
+
   // ---------------------------------------------------------------------
   // 在庫（還沒結帳）——跟 analytics-module.tsx 同一套規則：排除軟刪除、
   // 排除已售出，即時用 approved 維修請款金額算整備成本。
@@ -105,15 +134,15 @@ export function OverviewModule({
   const inventoryAssetCost = inventoryCars.reduce((sum, c) => sum + liveTotalCost(c), 0);
 
   // ---------------------------------------------------------------------
-  // 本月已結案——跟 analytics-module.tsx 完全一致的月份歸屬規則
-  // （closed_at，不是 created_at）。
+  // 已結帳（選定區間內）——跟 analytics-module.tsx 一樣用 closed_at（不是
+  // created_at）判斷歸屬哪個區間；區間本身可以自己選，見上面的說明。
   // ---------------------------------------------------------------------
-  const closedThisMonthCars = activeCars.filter(
-    (c) => c.status === "sold" && c.closed_at != null && isThisMonth(c.closed_at, now)
+  const closedInRangeCars = activeCars.filter(
+    (c) => c.status === "sold" && c.closed_at != null && isInRange(c.closed_at, closedRange)
   );
-  const soldThisMonthCount = closedThisMonthCars.length;
-  const revenueThisMonth = closedThisMonthCars.reduce((sum, c) => sum + Number(c.final_price ?? c.selling_price ?? 0), 0);
-  const realizedProfitThisMonth = closedThisMonthCars.reduce((sum, c) => {
+  const soldInRangeCount = closedInRangeCars.length;
+  const revenueInRange = closedInRangeCars.reduce((sum, c) => sum + Number(c.final_price ?? c.selling_price ?? 0), 0);
+  const realizedProfitInRange = closedInRangeCars.reduce((sum, c) => {
     const revenue = c.final_price ?? c.selling_price ?? 0;
     // 2026-09-06：收購獎金比照業務抽成一起處理，理由見 analytics-module.tsx
     // 開頭的隱私說明——兩筆都是薪資性質，沒有 canViewCommission 的人一律
@@ -131,7 +160,7 @@ export function OverviewModule({
   // 理由見檔案開頭的說明。這裡刻意不再另外處理 canViewCommission——
   // canViewFinalCost 已經比 canViewCommission 更嚴格（只有會計/老闆），
   // 看得到這張卡片的人本來就看得到業務抽成/收購獎金。
-  const floorBasedProfitThisMonth = closedThisMonthCars.reduce((sum, c) => {
+  const floorBasedProfitInRange = closedInRangeCars.reduce((sum, c) => {
     const revenue = Number(c.final_price ?? c.selling_price ?? 0);
     const costBasis = c.floor_price ?? c.purchase_price;
     const prepCost = Number(c.closed_prep_cost ?? 0);
@@ -216,48 +245,65 @@ export function OverviewModule({
           unit="件"
           onClick={() => onNavigate("deals")}
         />
-        <StatCard label="本月成交" value={soldThisMonthCount} unit="台" onClick={() => onNavigate("inventory")} />
+        <StatCard label={`${closedRangeLabel}成交`} value={soldInRangeCount} unit="台" onClick={() => onNavigate("inventory")} />
         <StatCard label="本月新增客戶" value={newCustomersThisMonth} unit="位" onClick={() => onNavigate("crm")} />
       </div>
 
       {/* 金額類卡片——只有 canViewAnalytics 看得到，跟「車行經營數據看板」
-          同一個權限開關，避免首頁把敏感財務資料洩漏給一般員工。 */}
+          同一個權限開關，避免首頁把敏感財務資料洩漏給一般員工。
+          2026-09-06 新增日期區間選單——安安反映每間店結帳週期算法不一樣，
+          不一定是嚴格的日曆月，這裡跟「已結帳車輛清單」共用同一個
+          DateRangeFilter，選好的區間會同時套用到這幾張卡片跟下面的清單、
+          還有上面「{closedRangeLabel}成交」那張台數卡片，不用分開調。 */}
       {canViewAnalytics && (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <MoneyCard label="本月銷售營業額" value={revenueThisMonth} />
-          <MoneyCard
-            label="本月已實現毛利"
-            value={realizedProfitThisMonth}
-            hint={canViewCommission ? undefined : "不含業務抽成/收購獎金"}
+        <>
+          <DateRangeFilter
+            preset={rangePreset}
+            onPresetChange={setRangePreset}
+            customStart={rangeCustomStart}
+            onCustomStartChange={setRangeCustomStart}
+            customEnd={rangeCustomEnd}
+            onCustomEndChange={setRangeCustomEnd}
           />
-          <MoneyCard label="在庫總成本（含整備）" value={inventoryAssetCost} hint="即時計算，尚未結帳" />
-          {/* 2026-09-06 新增：底價基準淨利，只有會計/老闆（canViewFinalCost）
-              看得到，見檔案開頭的說明。 */}
-          {canViewFinalCost && (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <MoneyCard label={`${closedRangeLabel}銷售營業額`} value={revenueInRange} />
             <MoneyCard
-              label="本月已實現淨利（底價基準）"
-              value={floorBasedProfitThisMonth}
-              hint="成本改用底價計算，沒填底價的車輛退回用實際收購價"
+              label={`${closedRangeLabel}已實現毛利`}
+              value={realizedProfitInRange}
+              hint={canViewCommission ? undefined : "不含業務抽成/收購獎金"}
             />
-          )}
-        </div>
+            <MoneyCard label="在庫總成本（含整備）" value={inventoryAssetCost} hint="即時計算，尚未結帳" />
+            {/* 2026-09-06 新增：底價基準淨利，只有會計/老闆（canViewFinalCost）
+                看得到，見檔案開頭的說明。 */}
+            {canViewFinalCost && (
+              <MoneyCard
+                label={`${closedRangeLabel}已實現淨利（底價基準）`}
+                value={floorBasedProfitInRange}
+                hint="成本改用底價計算，沒填底價的車輛退回用實際收購價"
+              />
+            )}
+          </div>
+        </>
       )}
 
-      {/* 本月已結帳車輛清單——2026-09-06 新增，安安反映儀表板要能一眼看到
+      {/* 已結帳車輛清單——2026-09-06 新增，安安反映儀表板要能一眼看到
           「已結帳哪幾台車」，不是只看總數字。跟上面金額卡片同一批
-          closedThisMonthCars，同一個 canViewAnalytics 權限開關；毛利/淨利
-          欄位再比照隱私規則，沒有 canViewCommission 就不顯示。 */}
+          closedInRangeCars、同一個日期區間、同一個 canViewAnalytics 權限
+          開關；毛利/淨利欄位再比照隱私規則，沒有 canViewCommission 就
+          不顯示。 */}
       {canViewAnalytics && (
         <div className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
           <div className="flex items-center gap-2">
             <span aria-hidden>🧾</span>
-            <h3 className="text-sm font-semibold text-neutral-800">本月已結帳車輛（{closedThisMonthCars.length} 台）</h3>
+            <h3 className="text-sm font-semibold text-neutral-800">
+              {closedRangeLabel}已結帳車輛（{closedInRangeCars.length} 台）
+            </h3>
           </div>
-          {closedThisMonthCars.length === 0 ? (
-            <p className="mt-3 text-sm text-neutral-400">本月尚無已結帳車輛</p>
+          {closedInRangeCars.length === 0 ? (
+            <p className="mt-3 text-sm text-neutral-400">這個區間尚無已結帳車輛</p>
           ) : (
             <ul className="mt-3 divide-y divide-neutral-100">
-              {[...closedThisMonthCars]
+              {[...closedInRangeCars]
                 .sort((a, b) => new Date(b.closed_at!).getTime() - new Date(a.closed_at!).getTime())
                 .map((c) => {
                   const revenue = Number(c.final_price ?? c.selling_price ?? 0);
