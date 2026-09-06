@@ -9,7 +9,26 @@ import {
   deleteCompanyExpense,
   type CompanyExpenseFormState,
 } from "../company-expenses-actions";
-import { COMPANY_EXPENSE_CATEGORIES, COMPANY_EXPENSE_PAYMENT_METHODS } from "@/lib/company-expense-constants";
+import { COMPANY_EXPENSE_PAYMENT_METHODS } from "@/lib/company-expense-constants";
+
+// 2026-09-05：這個元件目前沒有任何頁面 import 它（accounting/page.tsx
+// 自己另外寫了一套公司開銷的新增/明細 UI，見那邊的 CompanyExpenseCard），
+// 但先保留而不刪除，避免萬一之後又要接回獨立分頁時整段邏輯要重寫。費用
+// 類別以前是從 company-expense-constants.ts 匯出的 COMPANY_EXPENSE_CATEGORIES
+// 靜態清單，但那份清單已經因為「類別 2026-08-31 起改成每個車行自己在
+// 「公司營運開銷」分頁維護的動態清單」而被拿掉了（見那個檔案開頭的
+// 說明）；這裡沒有 tenant 的即時類別資料可以查（元件目前拿不到
+// company_expense_categories 的查詢結果），所以維持這份寫死的清單當
+// 保底選項，跟 supabase_schema.sql 種子資料的 7 個預設類別一致。
+const FALLBACK_CATEGORIES = [
+  { value: "水電費", label: "水電費" },
+  { value: "網路通訊", label: "網路通訊" },
+  { value: "場地租金", label: "場地租金" },
+  { value: "廣告行銷", label: "廣告行銷" },
+  { value: "人事薪資", label: "人事薪資" },
+  { value: "行政雜項", label: "行政雜項" },
+  { value: "專業服務", label: "專業服務" },
+] as const;
 
 const initialState: CompanyExpenseFormState = {};
 const INPUT_CLASS =
@@ -86,8 +105,8 @@ export function CompanyExpensesModule({ expenses }: { expenses: CompanyExpense[]
 
           <div>
             <label className="block text-sm font-medium text-neutral-700">費用類別</label>
-            <select name="category" defaultValue={COMPANY_EXPENSE_CATEGORIES[0].value} className={INPUT_CLASS}>
-              {COMPANY_EXPENSE_CATEGORIES.map((c) => (
+            <select name="category" defaultValue={FALLBACK_CATEGORIES[0].value} className={INPUT_CLASS}>
+              {FALLBACK_CATEGORIES.map((c) => (
                 <option key={c.value} value={c.value}>
                   {c.label}
                 </option>
