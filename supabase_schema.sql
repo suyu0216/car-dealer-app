@@ -1467,3 +1467,159 @@ on conflict (tenant_id, name) do nothing;
 --   set role = 'super_admin', tenant_id = null
 --   where id = '<該使用者的 auth.users.id>';
 -- =============================================================================
+
+-- =============================================================================
+-- 2026-09-06：車輛表單補充欄位 ＋ 客戶分類／證件照片
+-- =============================================================================
+-- 跟競品 Hocar 比較後，安安要求優先補上這幾項：
+--   車輛：引擎號碼、是否有備用鑰匙、更細的「車輛來源」分類（8 種）、
+--         「來源帳務分類」（內帳/外帳）、完整的「賣家資訊」——每一台車都
+--         記錄（不只二胎／人頭車才記，這是跟既有「二胎／人頭車合作紀錄」
+--         完全獨立的另一件事，見 car-form-modal.tsx 的新 Accordion）。
+--   客戶：分成「個人／公司／車商」三種類型，並且可以上傳證件照片（最多
+--         10 張，張數限制在前端表單處理）。
+alter table public.cars add column if not exists engine_number text;
+alter table public.cars add column if not exists has_spare_key boolean not null default false;
+alter table public.cars add column if not exists source_category text;
+alter table public.cars add column if not exists source_ledger_type text;
+-- 賣家資訊：姓名/身分證/地址/生日都是敏感個資，跟收購成本一樣只有
+-- canViewCost 權限的人看得到／填得到（沒有權限的人在表單上用隱藏欄位
+-- 原封不動送回既有值，見 car-form-modal.tsx／cars-actions.ts）。
+alter table public.cars add column if not exists seller_name text;
+alter table public.cars add column if not exists seller_id_number text;
+alter table public.cars add column if not exists seller_address text;
+alter table public.cars add column if not exists seller_birthdate date;
+
+-- 車輛來源分類——比照 Hocar 拆出的常見進貨情境，允許 NULL（舊資料/
+-- 尚未分類，不強制回填），跟 body_type 車型分類是同一種「選填分類」
+-- 設計方式。
+alter table public.cars drop constraint if exists cars_source_category_check;
+alter table public.cars add constraint cars_source_category_check
+  check (
+    source_category is null
+    or source_category in ('拍賣', '代步車', '寄售', '外購', '車換車', '行口', '客戶介紹', '其他')
+  );
+
+-- 來源帳務分類——會計內部用，標記這筆車源的錢要記在「內帳」還是「外帳」，
+-- 屬於財務敏感資訊，跟賣家資訊一樣用 canViewCost 把關。
+alter table public.cars drop constraint if exists cars_source_ledger_type_check;
+alter table public.cars add constraint cars_source_ledger_type_check
+  check (source_ledger_type is null or source_ledger_type in ('內帳', '外帳'));
+
+-- 賣家證件照片（身分證正反面等）——比照 car_photos 的相簿表結構，但是
+-- 放進私有的 identity-documents bucket（見下面 storage 設定），不比照
+-- car_photos 公開讀取——這是敏感個資文件，不是展示照片。RLS 跟 cars 本身
+-- 一樣是純租戶隔離（不是 owner-based）：賣家資訊屬於「成本類財務敏感
+-- 資訊」，用應用層的 canViewCost 權限把關，跟客戶資料隱私保護
+-- （owner_profile_id）是不同的模型，不需要比照那一套。
+create table if not exists public.car_seller_id_photos (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references public.tenants(id) on delete cascade,
+  car_id uuid not null references public.cars(id) on delete cascade,
+  path text not null,
+  sort_order integer not null default 0,
+  created_at timestamptz not null default now()
+);
+
+alter table public.car_seller_id_photos enable row level security;
+
+drop policy if exists "car_seller_id_photos_super_admin_all" on public.car_seller_id_photos;
+create policy "car_seller_id_photos_super_admin_all"
+  on public.car_seller_id_photos for all
+  using (public.is_super_admin())
+  with check (public.is_super_admin());
+
+drop policy if exists "car_seller_id_photos_tenant_scoped" on public.car_seller_id_photos;
+create policy "car_seller_id_photos_tenant_scoped"
+  on public.car_seller_id_photos for all
+  using (tenant_id = public.current_tenant_id())
+  with check (tenant_id = public.current_tenant_id());
+
+grant select, insert, update, delete on public.car_seller_id_photos to authenticated;
+
+-- 客戶分類（個人／公司／車商）——預設「個人」，既有客戶資料視同個人，
+-- 不強制回填。
+alter table public.customers add column if not exists customer_type text not null default '個人';
+alter table public.customers drop constraint if exists customers_customer_type_check;
+alter table public.customers add constraint customers_customer_type_check
+  check (customer_type in ('個人', '公司', '車商'));
+
+-- 客戶證件照片——私有 bucket，資料表 RLS 套用跟 customers 本尊一模一樣的
+-- owner-based 隱私保護模型：一般員工只看得到自己名下客戶的證件照，老闆
+-- 例外看得到全部。owner_profile_id 在新增當下直接複製自對應的
+-- customers.owner_profile_id（不開放前端指定，見 customers-actions.ts），
+-- 這裡不用另外 join customers 表比對，避免多一層 RLS 查詢負擔。
+create table if not exists public.customer_id_photos (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references public.tenants(id) on delete cascade,
+  customer_id uuid not null references public.customers(id) on delete cascade,
+  owner_profile_id uuid,
+  path text not null,
+  sort_order integer not null default 0,
+  created_at timestamptz not null default now()
+);
+
+alter table public.customer_id_photos enable row level security;
+
+drop policy if exists "customer_id_photos_super_admin_all" on public.customer_id_photos;
+create policy "customer_id_photos_super_admin_all"
+  on public.customer_id_photos for all
+  using (public.is_super_admin())
+  with check (public.is_super_admin());
+
+drop policy if exists "customer_id_photos_owner_or_tenant_admin" on public.customer_id_photos;
+create policy "customer_id_photos_owner_or_tenant_admin"
+  on public.customer_id_photos for all
+  using (
+    tenant_id = public.current_tenant_id()
+    and (owner_profile_id = auth.uid() or public.current_role_name() = 'tenant_admin')
+  )
+  with check (
+    tenant_id = public.current_tenant_id()
+    and (owner_profile_id = auth.uid() or public.current_role_name() = 'tenant_admin')
+  );
+
+grant select, insert, update, delete on public.customer_id_photos to authenticated;
+
+-- Storage：新增私有 bucket 存放賣家／客戶證件照片——身分證等個資文件，
+-- 不能比照 car-photos 公開讀取，一律要透過伺服器簽發短效期 signed URL
+-- 才能顯示，做法完全比照既有 repair-evidences bucket 的模式（tenant 級
+-- 隔離；資料表本身的 owner-based 權限，見上面 customer_id_photos policy，
+-- 才是決定「哪些照片會被查出來、進而拿去簽 URL」的那一層）。
+insert into storage.buckets (id, name, public)
+values ('identity-documents', 'identity-documents', false)
+on conflict (id) do nothing;
+
+drop policy if exists "identity_documents_tenant_read" on storage.objects;
+create policy "identity_documents_tenant_read"
+  on storage.objects for select
+  to authenticated
+  using (
+    bucket_id = 'identity-documents'
+    and (storage.foldername(name))[1] = public.current_tenant_id()::text
+  );
+
+drop policy if exists "identity_documents_tenant_write" on storage.objects;
+create policy "identity_documents_tenant_write"
+  on storage.objects for insert
+  to authenticated
+  with check (
+    bucket_id = 'identity-documents'
+    and (storage.foldername(name))[1] = public.current_tenant_id()::text
+  );
+
+drop policy if exists "identity_documents_tenant_delete" on storage.objects;
+create policy "identity_documents_tenant_delete"
+  on storage.objects for delete
+  to authenticated
+  using (
+    bucket_id = 'identity-documents'
+    and (storage.foldername(name))[1] = public.current_tenant_id()::text
+  );
+
+drop policy if exists "identity_documents_super_admin_all" on storage.objects;
+create policy "identity_documents_super_admin_all"
+  on storage.objects for all
+  to authenticated
+  using (bucket_id = 'identity-documents' and public.is_super_admin())
+  with check (bucket_id = 'identity-documents' and public.is_super_admin());

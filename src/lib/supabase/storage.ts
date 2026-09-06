@@ -18,6 +18,20 @@ function buildBrandingObjectPath(tenantId: string, file: File) {
   return `${tenantId}/branding/${Date.now()}-${safeName}`;
 }
 
+/** 2026-09-06 新增：賣家／客戶證件照片，路徑放在
+ * "<tenant_id>/identity/<car|customer>/<entityId>/<檔名>"——第一層資料夾
+ * 一樣是 tenant_id，identity-documents bucket 的 storage policy（比對
+ * 第一層資料夾是不是 current_tenant_id()）不用另外改。 */
+function buildIdentityDocumentObjectPath(
+  tenantId: string,
+  kind: "car-seller" | "customer",
+  entityId: string,
+  file: File
+) {
+  const safeName = file.name.replace(/[^a-zA-Z0-9.\-_]/g, "_");
+  return `${tenantId}/identity/${kind}/${entityId}/${Date.now()}-${safeName}`;
+}
+
 /** 業務個人大頭照，路徑放在 "<tenant_id>/staff/<profile_id>/..."——第一層
  * 資料夾一樣是 tenant_id，car-photos 的 storage policy（比對第一層資料夾
  * 是不是 current_tenant_id()）不用另外改；第二層帶 profile_id 純粹只是
@@ -301,6 +315,90 @@ export async function createReceiptSignedUrls(
   try {
     const { data, error } = await supabase.storage
       .from("repair-evidences")
+      .createSignedUrls(paths, expiresInSeconds);
+
+    if (error || !data) return {};
+
+    const map: Record<string, string> = {};
+    for (const item of data) {
+      if (item.signedUrl && item.path) {
+        map[item.path] = item.signedUrl;
+      }
+    }
+    return map;
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * 2026-09-06 新增：上傳一張賣家／客戶證件照片到私有的 identity-documents
+ * bucket，回傳物件路徑（不是網址）——跟 uploadReceiptFile() 是同一套模式，
+ * 因為身分證等個資文件一樣不能公開讀取。
+ */
+export async function uploadIdentityDocument(
+  supabase: SupabaseClient,
+  tenantId: string,
+  kind: "car-seller" | "customer",
+  entityId: string,
+  file: File
+): Promise<{ path: string | null; error: string | null }> {
+  if (!file || file.size === 0) {
+    return { path: null, error: null };
+  }
+
+  try {
+    const path = buildIdentityDocumentObjectPath(tenantId, kind, entityId, file);
+    const { error } = await supabase.storage
+      .from("identity-documents")
+      .upload(path, file, { contentType: file.type || undefined, upsert: false });
+
+    if (error) {
+      return { path: null, error: error.message };
+    }
+
+    return { path, error: null };
+  } catch (e) {
+    return { path: null, error: e instanceof Error ? e.message : "證件照片上傳時發生未預期的錯誤。" };
+  }
+}
+
+/**
+ * 2026-09-06 新增：一次上傳多張證件照片——逐一呼叫
+ * uploadIdentityDocument()，個別檔案的成功/失敗結果都保留在回傳陣列裡
+ * （帶著 fileName 方便呼叫端組錯誤訊息），單一檔案上傳失敗不會影響其他張，
+ * 也不會中斷整批。跟 uploadCarPhotos() 是同一套模式。
+ */
+export async function uploadIdentityDocuments(
+  supabase: SupabaseClient,
+  tenantId: string,
+  kind: "car-seller" | "customer",
+  entityId: string,
+  files: File[]
+): Promise<{ path: string | null; error: string | null; fileName: string }[]> {
+  const results: { path: string | null; error: string | null; fileName: string }[] = [];
+  for (const file of files) {
+    const { path, error } = await uploadIdentityDocument(supabase, tenantId, kind, entityId, file);
+    results.push({ path, error, fileName: file.name });
+  }
+  return results;
+}
+
+/**
+ * 2026-09-06 新增：批次幫一批私有證件照片物件簽發短效期（預設 1 小時）的
+ * signed URL，跟 createReceiptSignedUrls() 是同一套模式，只是換一個
+ * bucket。失敗就靜靜回傳空物件，不應該讓呼叫端崩潰。
+ */
+export async function createIdentityDocumentSignedUrls(
+  supabase: SupabaseClient,
+  paths: string[],
+  expiresInSeconds = 3600
+): Promise<Record<string, string>> {
+  if (paths.length === 0) return {};
+
+  try {
+    const { data, error } = await supabase.storage
+      .from("identity-documents")
       .createSignedUrls(paths, expiresInSeconds);
 
     if (error || !data) return {};

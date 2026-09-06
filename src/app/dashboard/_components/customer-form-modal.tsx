@@ -1,9 +1,22 @@
 "use client";
 
-import { useActionState, useEffect } from "react";
-import { createCustomer, updateCustomer, type CustomerFormState } from "../customers-actions";
+import { useActionState, useEffect, useState } from "react";
+import {
+  createCustomer,
+  updateCustomer,
+  getCustomerIdPhotos,
+  deleteCustomerIdPhoto,
+  type CustomerFormState,
+} from "../customers-actions";
 import { useUnsavedChangesGuard } from "./use-unsaved-changes-guard";
+import { useMultiImageCompressOnChange } from "./use-image-compress-on-change";
+import { VALID_CUSTOMER_TYPES } from "@/lib/supabase/types";
 import type { Customer, CustomerFollowUpStatus } from "@/lib/supabase/types";
+
+/** 客戶證件照片一次最多上傳 10 張——跟 customers-actions.ts 的
+ * MAX_CUSTOMER_ID_PHOTOS 保持一致，這裡只是給前端提示文字/選檔張數
+ * 提醒用，真正擋下超額上傳的是伺服器端那份。 */
+const MAX_ID_PHOTOS = 10;
 
 export const FOLLOW_UP_LABEL: Record<CustomerFollowUpStatus, string> = {
   new: "新名單",
@@ -37,14 +50,42 @@ export function CustomerFormModal({
 }: {
   mode: "create" | "edit";
   customer?: Customer;
-  onClose: () => void;
+  /** 2026-09-06 調整：存檔成功時呼叫；如果客戶本身存成功、但證件照片
+   * 上傳失敗，會帶一句 warning 訊息上去，讓外層（CrmModule）用 Toast
+   * 顯示，跟 car-form-modal.tsx 的 onClose 是同一套設計。 */
+  onClose: (warning?: string) => void;
 }) {
   const action = mode === "create" ? createCustomer : updateCustomer;
   const [state, formAction, pending] = useActionState(action, initialState);
   const { markDirty, requestClose } = useUnsavedChangesGuard(onClose);
 
+  // 2026-09-06 新增：客戶證件照片，做法跟 car-form-modal.tsx 的賣家證件
+  // 照片是同一套——一次可選多張、上傳前先壓縮，既有照片（編輯模式）
+  // 另外呼叫 Server Action 現查現簽 signed URL 顯示（私有 bucket）。
+  const [selectedPhotoNames, setSelectedPhotoNames] = useState<string[]>([]);
+  const { onChange: onPhotosChange, compressing: photoCompressing } = useMultiImageCompressOnChange((files) =>
+    setSelectedPhotoNames(files.map((f) => f.name))
+  );
+  const [existingPhotos, setExistingPhotos] = useState<{ id: string; url: string }[]>([]);
   useEffect(() => {
-    if (state?.success) onClose();
+    if (mode !== "edit" || !customer) return;
+    let cancelled = false;
+    getCustomerIdPhotos(customer.id).then((photos) => {
+      if (!cancelled) setExistingPhotos(photos);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, customer?.id]);
+
+  async function handleRemovePhoto(photoId: string) {
+    setExistingPhotos((prev) => prev.filter((p) => p.id !== photoId));
+    await deleteCustomerIdPhoto(photoId);
+  }
+
+  useEffect(() => {
+    if (state?.success) onClose(state.warning);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state]);
 
@@ -70,6 +111,23 @@ export function CustomerFormModal({
           <div className="grid grid-cols-2 gap-3">
             <Field label="客戶姓名" name="name" defaultValue={customer?.name ?? ""} required />
             <Field label="電話" name="phone" defaultValue={customer?.phone ?? ""} />
+          </div>
+
+          {/* 2026-09-06 新增：跟競品 Hocar 比較後補上的客戶分類——預設
+              「個人」，既有客戶資料也視同個人，不強制回填。 */}
+          <div>
+            <label className="block text-sm font-medium text-neutral-700">客戶類型</label>
+            <select
+              name="customer_type"
+              defaultValue={customer?.customer_type ?? "個人"}
+              className={INPUT_CLASS}
+            >
+              {VALID_CUSTOMER_TYPES.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
           </div>
 
           <Field
@@ -126,6 +184,52 @@ export function CustomerFormModal({
             />
           </div>
 
+          {/* 2026-09-06 新增：客戶證件照片，最多 10 張——跟車輛表單的
+              賣家證件照片是同一套模式，私有 bucket，顯示時要另外簽
+              signed URL。 */}
+          <div>
+            <label className="block text-sm font-medium text-neutral-700">
+              證件照片（可一次選多張，最多 {MAX_ID_PHOTOS} 張）
+            </label>
+            <input
+              type="file"
+              name="id_photos"
+              accept="image/*"
+              multiple
+              onChange={onPhotosChange}
+              className="mt-1 block w-full text-sm text-neutral-600 file:mr-3 file:rounded-lg file:border-0 file:bg-[#BFA074] file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-white hover:file:bg-[#AD9066]"
+            />
+            {photoCompressing && <p className="mt-1 text-xs text-neutral-400">圖片壓縮中…</p>}
+            {!photoCompressing && selectedPhotoNames.length > 0 && (
+              <p className="mt-1 text-xs text-neutral-500">
+                已選 {selectedPhotoNames.length} 張：{selectedPhotoNames.join("、")}
+              </p>
+            )}
+            {existingPhotos.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {existingPhotos.map((p) => (
+                  <div key={p.id} className="relative">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={p.url}
+                      alt="客戶證件照片"
+                      className="h-16 w-16 rounded-lg border border-neutral-200 object-cover"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleRemovePhoto(p.id)}
+                      aria-label="移除這張照片"
+                      className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-neutral-800/80 text-xs text-white hover:bg-red-600"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <p className="mt-1 text-xs text-neutral-400">🔒 證件照片存放於私有空間，不會公開顯示。</p>
+          </div>
+
           {state?.error && (
             <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600 ring-1 ring-inset ring-red-100">
               {state.error}
@@ -142,10 +246,10 @@ export function CustomerFormModal({
             </button>
             <button
               type="submit"
-              disabled={pending}
+              disabled={pending || photoCompressing}
               className="rounded-lg bg-[#BFA074] px-3 py-1.5 text-sm font-medium text-white transition hover:bg-[#AD9066] disabled:opacity-60"
             >
-              {pending ? "儲存中…" : "儲存"}
+              {pending ? "儲存中…" : photoCompressing ? "圖片處理中…" : "儲存"}
             </button>
           </div>
         </form>

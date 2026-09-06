@@ -14,6 +14,31 @@ export type CarStatus = "preparing" | "in_stock" | "reserved" | "sold";
 export const VALID_BODY_TYPES = ["小型車", "房車", "休旅車", "跑車", "商用車"] as const;
 export type BodyType = (typeof VALID_BODY_TYPES)[number];
 
+// 2026-09-06 新增：跟競品 Hocar 比較後補上的「車輛來源」分類——跟
+// cars_source_category_check constraint 保持一致，兩邊都要一起改。放在
+// 這個共用型別檔案的理由跟 VALID_BODY_TYPES 一樣。
+export const VALID_SOURCE_CATEGORIES = [
+  "拍賣",
+  "代步車",
+  "寄售",
+  "外購",
+  "車換車",
+  "行口",
+  "客戶介紹",
+  "其他",
+] as const;
+export type SourceCategory = (typeof VALID_SOURCE_CATEGORIES)[number];
+
+/** 來源帳務分類——這筆車源的錢要記在「內帳」還是「外帳」，會計內部用，
+ * 跟 cars_source_ledger_type_check constraint 保持一致。 */
+export const VALID_SOURCE_LEDGER_TYPES = ["內帳", "外帳"] as const;
+export type SourceLedgerType = (typeof VALID_SOURCE_LEDGER_TYPES)[number];
+
+/** 客戶分類（個人／公司／車商）——跟 customers_customer_type_check
+ * constraint 保持一致。 */
+export const VALID_CUSTOMER_TYPES = ["個人", "公司", "車商"] as const;
+export type CustomerType = (typeof VALID_CUSTOMER_TYPES)[number];
+
 export type TransactionType = "income" | "expense";
 
 /** pending：剛註冊，後台可用但前台展間未對外開放／active：Super Admin
@@ -132,6 +157,27 @@ export interface Car {
   license_plate: string | null;
   vin: string | null;
   registration_number: string | null;
+  /** 2026-09-06 新增：引擎號碼——跟 vin（車身號碼）是不同的兩組編號，
+   * 跟競品 Hocar 比較後補上，見 car-form-modal.tsx「基本規格」區塊。 */
+  engine_number: string | null;
+  /** 2026-09-06 新增：是否有備用鑰匙，車行收購/交車時常見的檢查項目。 */
+  has_spare_key: boolean;
+  /** 2026-09-06 新增：更細的「車輛來源」分類（拍賣/代步車/寄售/外購/
+   * 車換車等 8 種，見 VALID_SOURCE_CATEGORIES），可為 null（舊資料/
+   * 尚未分類），跟 body_type 車型分類是同一種「選填分類」設計方式。 */
+  source_category: SourceCategory | null;
+  /** 2026-09-06 新增：這筆車源的錢要記在「內帳」還是「外帳」，會計內部
+   * 用的財務敏感資訊，跟賣家資訊一樣只有 canViewCost 的人看得到/填得到。 */
+  source_ledger_type: SourceLedgerType | null;
+  // 賣家資訊：2026-09-06 新增，每一台車都可以記錄（不像下面的二胎／人頭
+  // 車合作紀錄只在特定情境才填），跟收購成本一樣屬於財務敏感個資，只有
+  // canViewCost 的人看得到/填得到，見 car-form-modal.tsx 新的「賣家資訊」
+  // Accordion。證件照片另外存在 car_seller_id_photos 表（見下面
+  // CarSellerIdPhoto），不是這裡的欄位。
+  seller_name: string | null;
+  seller_id_number: string | null;
+  seller_address: string | null;
+  seller_birthdate: string | null;
   // 車況與認證
   certification: string | null;
   /** 逗號分隔的配備清單，例如 "電動座椅,倒車雷達,環景鏡頭"。 */
@@ -242,6 +288,34 @@ export interface CarPhoto {
   tenant_id: string;
   car_id: string;
   url: string;
+  sort_order: number;
+  created_at: string;
+}
+
+/** 2026-09-06 新增：賣家證件照片（身分證正反面等）——存在私有的
+ * identity-documents bucket，`path` 是物件路徑（不是網址），顯示時要
+ * 另外向伺服器要 signed URL，做法跟 RepairItem.evidence_path 一致，
+ * 見 storage.ts 的 createIdentityDocumentSignedUrls()。 */
+export interface CarSellerIdPhoto {
+  id: string;
+  tenant_id: string;
+  car_id: string;
+  path: string;
+  sort_order: number;
+  created_at: string;
+}
+
+/** 2026-09-06 新增：客戶證件照片（最多 10 張，張數限制在前端表單處理）
+ * ——存在私有的 identity-documents bucket，`path` 是物件路徑（不是網址），
+ * 顯示時一樣要另外向伺服器要 signed URL。owner_profile_id 沿用跟
+ * Customer 一樣的隱私保護模型，見 supabase_schema.sql 的
+ * customer_id_photos RLS policy 說明。 */
+export interface CustomerIdPhoto {
+  id: string;
+  tenant_id: string;
+  customer_id: string;
+  owner_profile_id: string | null;
+  path: string;
   sort_order: number;
   created_at: string;
 }
@@ -375,6 +449,9 @@ export interface Customer {
   follow_up_status: CustomerFollowUpStatus;
   line_id: string | null;
   note: string | null;
+  /** 2026-09-06 新增：客戶分類（個人／公司／車商），跟競品 Hocar 比較
+   * 後補上，見 VALID_CUSTOMER_TYPES。既有客戶資料庫層預設「個人」。 */
+  customer_type: CustomerType;
   created_at: string;
   /** 這筆客戶名單歸屬的員工——客戶資料隱私保護用，見
    * customers-actions.ts／supabase_schema.sql 的 customers RLS policy。

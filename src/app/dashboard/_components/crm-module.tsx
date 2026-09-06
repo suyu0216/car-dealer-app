@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Customer } from "@/lib/supabase/types";
 import { formatCurrency } from "@/lib/format";
 import { CustomerFormModal, FOLLOW_UP_LABEL, FOLLOW_UP_STYLE } from "./customer-form-modal";
@@ -23,6 +23,20 @@ export function CrmModule({
 }) {
   const [modalState, setModalState] = useState<ModalState>(null);
   const staffNameById = new Map(staff.map((s) => [s.id, s.name ?? "未命名"]));
+
+  // 2026-09-06 新增：證件照片上傳失敗時的非阻斷性警告，跟
+  // cars-manager.tsx 的 Toast 是同一套模式。
+  const [toast, setToast] = useState<string | null>(null);
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(() => setToast(null), 8000);
+    return () => clearTimeout(timer);
+  }, [toast]);
+
+  function closeFormModal(warning?: string) {
+    setModalState(null);
+    if (warning) setToast(warning);
+  }
 
   return (
     <section>
@@ -69,7 +83,17 @@ export function CrmModule({
             {customers.map((c) => (
               <tr key={c.id} className="hover:bg-neutral-50">
                 <td className="px-4 py-2">
-                  <p className="font-medium text-neutral-800">{c.name}</p>
+                  <p className="flex items-center gap-1.5 font-medium text-neutral-800">
+                    {c.name}
+                    {/* 2026-09-06 新增：客戶類型標籤——「個人」是絕大多數
+                        情況，不特別標示以免畫面雜亂，只標「公司」「車商」
+                        這兩種比較少見、需要特別留意的類型。 */}
+                    {c.customer_type !== "個人" && (
+                      <span className="inline-flex items-center rounded-full bg-neutral-100 px-1.5 py-0.5 text-[10px] font-medium text-neutral-500 ring-1 ring-inset ring-neutral-200">
+                        {c.customer_type}
+                      </span>
+                    )}
+                  </p>
                   <p className="text-xs text-neutral-400">{c.phone ?? "—"}</p>
                 </td>
                 <td className="px-4 py-2 text-neutral-600">{c.interested_model ?? "—"}</td>
@@ -115,8 +139,25 @@ export function CrmModule({
         <CustomerFormModal
           mode={modalState.mode}
           customer={modalState.mode === "edit" ? modalState.customer : undefined}
-          onClose={() => setModalState(null)}
+          onClose={closeFormModal}
         />
+      )}
+
+      {toast && (
+        <div className="fixed inset-x-0 bottom-6 z-[60] flex justify-center px-4">
+          <div className="flex max-w-lg items-start gap-3 rounded-2xl border border-[#F0DFC0] bg-[#FBF1E4] px-4 py-3 text-sm text-[#8A5F24] shadow-lg">
+            <span className="mt-0.5">⚠️</span>
+            <p className="flex-1">{toast}</p>
+            <button
+              type="button"
+              onClick={() => setToast(null)}
+              aria-label="關閉提示"
+              className="text-[#B4813E] hover:text-[#8A5F24]"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
       )}
     </section>
   );

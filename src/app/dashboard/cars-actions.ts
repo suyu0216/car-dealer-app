@@ -3,10 +3,10 @@
 import { revalidatePath } from "next/cache";
 import { requireTenantUser } from "@/lib/supabase/dal";
 import { createClient } from "@/lib/supabase/server";
-import { uploadCarPhotos } from "@/lib/supabase/storage";
+import { uploadCarPhotos, uploadIdentityDocuments, createIdentityDocumentSignedUrls } from "@/lib/supabase/storage";
 import { getEffectivePermissions } from "@/lib/permissions";
 import { createNotification } from "@/lib/supabase/notifications";
-import { VALID_BODY_TYPES } from "@/lib/supabase/types";
+import { VALID_BODY_TYPES, VALID_SOURCE_CATEGORIES, VALID_SOURCE_LEDGER_TYPES } from "@/lib/supabase/types";
 import type { CarStatus, DealStatus, PaymentMethod, TransferStatus } from "@/lib/supabase/types";
 
 export interface CarFormState {
@@ -55,6 +55,24 @@ interface ParsedCar {
   color: string | null;
   license_plate: string | null;
   vin: string | null;
+  /** 2026-09-06 新增：引擎號碼，跟 vin 是不同的兩組編號。 */
+  engine_number: string | null;
+  /** 2026-09-06 新增：是否有備用鑰匙。 */
+  has_spare_key: boolean;
+  /** 2026-09-06 新增：更細的「車輛來源」分類（8 種），可為 null（未分類）。 */
+  source_category: (typeof VALID_SOURCE_CATEGORIES)[number] | null;
+  /** 2026-09-06 新增：來源帳務分類（內帳/外帳），財務敏感資訊，只有
+   * canViewCost 的人送出的值才會被採用（見 createCar/updateCar 怎麼跟
+   * 其他成本欄位一樣用隱藏欄位保留原值）。 */
+  source_ledger_type: (typeof VALID_SOURCE_LEDGER_TYPES)[number] | null;
+  // 賣家資訊：2026-09-06 新增，每一台車都可以記錄，跟收購成本一樣屬於
+  // 財務敏感個資，只有 canViewCost 的人看得到/填得到。證件照片走另一條
+  // 上傳流程（見 createCar/updateCar 裡的 uploadIdentityDocuments 那段），
+  // 不是這裡的表單欄位。
+  seller_name: string | null;
+  seller_id_number: string | null;
+  seller_address: string | null;
+  seller_birthdate: string | null;
   certification: string | null;
   equipment_tags: string | null;
   condition_notes: string | null;
@@ -311,6 +329,14 @@ function parseCarForm(formData: FormData): ParsedCar {
     color: optionalText(formData, "color"),
     license_plate: optionalText(formData, "license_plate"),
     vin: optionalText(formData, "vin"),
+    engine_number: optionalText(formData, "engine_number"),
+    has_spare_key: formData.has("has_spare_key"),
+    source_category: optionalEnum(formData, "source_category", VALID_SOURCE_CATEGORIES, "車輛來源"),
+    source_ledger_type: optionalEnum(formData, "source_ledger_type", VALID_SOURCE_LEDGER_TYPES, "來源帳務分類"),
+    seller_name: optionalText(formData, "seller_name"),
+    seller_id_number: optionalText(formData, "seller_id_number"),
+    seller_address: optionalText(formData, "seller_address"),
+    seller_birthdate: optionalText(formData, "seller_birthdate"),
     certification: optionalText(formData, "certification"),
     equipment_tags: optionalText(formData, "equipment_tags"),
     condition_notes: optionalText(formData, "condition_notes"),
@@ -512,6 +538,46 @@ export async function createCar(
     }
   }
 
+  // 2026-09-06 新增：賣家證件照片，跟車輛照片一樣是「錦上添花」的第二
+  // 步驟——上傳到私有的 identity-documents bucket（跟公開的車輛照片是
+  // 不同 bucket），失敗一樣只警告、不擋整體新增流程。
+  const sellerPhotoFiles = formData
+    .getAll("seller_id_photos")
+    .filter((f): f is File => f instanceof File && f.size > 0);
+  if (sellerPhotoFiles.length > 0) {
+    try {
+      const results = await uploadIdentityDocuments(
+        supabase,
+        profile.tenant_id!,
+        "car-seller",
+        inserted.id,
+        sellerPhotoFiles
+      );
+      const uploaded = results.filter((r): r is { path: string; error: null; fileName: string } => r.path != null);
+      const failed = results.filter((r) => r.path == null);
+      if (uploaded.length > 0) {
+        await supabase.from("car_seller_id_photos").insert(
+          uploaded.map((u, i) => ({
+            tenant_id: profile.tenant_id!,
+            car_id: inserted.id,
+            path: u.path,
+            sort_order: i,
+          }))
+        );
+      }
+      if (failed.length > 0) {
+        console.error(
+          `[createCar] ${failed.length} 張賣家證件照片上傳失敗（車輛 ${inserted.id} 已成功建立）：${failed.map((f) => f.fileName).join("、")}`
+        );
+        photoWarning = photoWarning
+          ? `${photoWarning}另外還有 ${failed.length} 張賣家證件照片上傳失敗，請稍後編輯車輛重新上傳。`
+          : `車輛已成功新增，但有 ${failed.length} 張賣家證件照片上傳失敗，請稍後編輯車輛重新上傳。`;
+      }
+    } catch (e) {
+      console.error(`[createCar] 賣家證件照片上傳發生未預期錯誤（車輛 ${inserted.id} 已成功建立）：`, e);
+    }
+  }
+
   revalidatePath("/dashboard");
   return { success: true, warning: photoWarning };
 }
@@ -637,6 +703,52 @@ export async function updateCar(
       const message = e instanceof Error ? e.message : "未知錯誤";
       console.error(`[updateCar] 照片上傳發生未預期錯誤（車輛 ${carId} 其餘欄位仍會更新）：`, e);
       photoWarning = `車輛資料已成功更新，但照片上傳發生未預期錯誤（${message}），照片維持原樣，請稍後重新嘗試。`;
+    }
+  }
+
+  // 2026-09-06 新增：賣家證件照片，跟編輯時新增車輛照片一樣接在既有相簿
+  // 「後面」，不影響已經上傳過的照片；失敗只警告、不擋其他欄位的更新。
+  const sellerPhotoFiles = formData
+    .getAll("seller_id_photos")
+    .filter((f): f is File => f instanceof File && f.size > 0);
+  if (sellerPhotoFiles.length > 0) {
+    try {
+      const results = await uploadIdentityDocuments(
+        supabase,
+        profile.tenant_id!,
+        "car-seller",
+        carId,
+        sellerPhotoFiles
+      );
+      const uploaded = results.filter((r): r is { path: string; error: null; fileName: string } => r.path != null);
+      const failed = results.filter((r) => r.path == null);
+      if (uploaded.length > 0) {
+        const { data: existingSellerPhotos } = await supabase
+          .from("car_seller_id_photos")
+          .select("sort_order")
+          .eq("car_id", carId)
+          .order("sort_order", { ascending: false })
+          .limit(1);
+        const nextSortOrder = (existingSellerPhotos?.[0]?.sort_order ?? -1) + 1;
+        await supabase.from("car_seller_id_photos").insert(
+          uploaded.map((u, i) => ({
+            tenant_id: profile.tenant_id!,
+            car_id: carId,
+            path: u.path,
+            sort_order: nextSortOrder + i,
+          }))
+        );
+      }
+      if (failed.length > 0) {
+        console.error(
+          `[updateCar] ${failed.length} 張賣家證件照片上傳失敗（車輛 ${carId} 其餘欄位仍會更新）：${failed.map((f) => f.fileName).join("、")}`
+        );
+        photoWarning = photoWarning
+          ? `${photoWarning}另外還有 ${failed.length} 張賣家證件照片上傳失敗，請稍後重新嘗試。`
+          : `車輛資料已成功更新，但有 ${failed.length} 張賣家證件照片上傳失敗，請稍後重新嘗試。`;
+      }
+    } catch (e) {
+      console.error(`[updateCar] 賣家證件照片上傳發生未預期錯誤（車輛 ${carId} 其餘欄位仍會更新）：`, e);
     }
   }
 
@@ -908,6 +1020,59 @@ export async function deleteCar(carId: string) {
       actorName: profile.name,
       link: "/dashboard",
     });
+  }
+
+  revalidatePath("/dashboard");
+  return { success: true };
+}
+
+/**
+ * 2026-09-06 新增：查一輛車目前的賣家證件照片，並幫每張現查現簽短效期
+ * signed URL（私有 identity-documents bucket，不能直接當 <img src>）。
+ * 只在 car-form-modal.tsx 開啟「編輯」某一輛車時才呼叫，不在
+ * dashboard/page.tsx 載入整頁時就先幫全部車輛簽好——大部分車的編輯表單
+ * 根本不會被打開，沒必要預先簽。RLS（car_seller_id_photos_tenant_scoped）
+ * 已經確保只查得到自己車行的資料，這裡不用再手動比對 tenant_id。
+ */
+export async function getCarSellerIdPhotos(
+  carId: string
+): Promise<{ id: string; url: string }[]> {
+  await requireTenantUser();
+  const supabase = await createClient();
+
+  const { data } = await supabase
+    .from("car_seller_id_photos")
+    .select("id, path")
+    .eq("car_id", carId)
+    .order("sort_order", { ascending: true });
+
+  const photos = data ?? [];
+  if (photos.length === 0) return [];
+
+  const urls = await createIdentityDocumentSignedUrls(
+    supabase,
+    photos.map((p) => p.path)
+  );
+
+  return photos.filter((p) => urls[p.path]).map((p) => ({ id: p.id, url: urls[p.path] }));
+}
+
+/** 2026-09-06 新增：移除一張賣家證件照片（連同 storage 裡的物件一起
+ * 刪除）。RLS 已經限制只能刪到自己車行的資料列，這裡不用再另外檢查。 */
+export async function deleteCarSellerIdPhoto(photoId: string) {
+  await requireTenantUser();
+  const supabase = await createClient();
+
+  const { data: photo } = await supabase
+    .from("car_seller_id_photos")
+    .select("path")
+    .eq("id", photoId)
+    .maybeSingle();
+
+  await supabase.from("car_seller_id_photos").delete().eq("id", photoId);
+
+  if (photo?.path) {
+    await supabase.storage.from("identity-documents").remove([photo.path]);
   }
 
   revalidatePath("/dashboard");

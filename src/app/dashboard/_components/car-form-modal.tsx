@@ -1,10 +1,16 @@
 "use client";
 
 import { useActionState, useEffect, useState } from "react";
-import { createCar, updateCar, type CarFormState } from "../cars-actions";
+import {
+  createCar,
+  updateCar,
+  getCarSellerIdPhotos,
+  deleteCarSellerIdPhoto,
+  type CarFormState,
+} from "../cars-actions";
 import { useUnsavedChangesGuard } from "./use-unsaved-changes-guard";
 import { useMultiImageCompressOnChange } from "./use-image-compress-on-change";
-import { VALID_BODY_TYPES } from "@/lib/supabase/types";
+import { VALID_BODY_TYPES, VALID_SOURCE_CATEGORIES, VALID_SOURCE_LEDGER_TYPES } from "@/lib/supabase/types";
 import type { Car, CarStatus, FinancialAccount, PaymentMethod, TransferStatus } from "@/lib/supabase/types";
 
 const STATUS_OPTIONS: { value: CarStatus; label: string }[] = [
@@ -97,6 +103,37 @@ export function CarFormModal({
     setSelectedPhotoNames(files.map((f) => f.name))
   );
   const { markDirty, requestClose } = useUnsavedChangesGuard(() => onClose());
+
+  // 2026-09-06 新增：賣家證件照片（身分證正反面等），跟車輛照片一樣可以
+  // 一次選多張、上傳前先壓縮，走同一套 useMultiImageCompressOnChange
+  // hook，但檔案 input 的 name 不同（"seller_id_photos"），送出後由
+  // cars-actions.ts 另外上傳到私有的 identity-documents bucket，不會跟
+  // 展示用的車輛照片混在一起。
+  const [selectedSellerPhotoNames, setSelectedSellerPhotoNames] = useState<string[]>([]);
+  const { onChange: onSellerPhotosChange, compressing: sellerPhotoCompressing } = useMultiImageCompressOnChange(
+    (files) => setSelectedSellerPhotoNames(files.map((f) => f.name))
+  );
+  // 既有的賣家證件照片（編輯模式）——私有 bucket，不能直接用 car prop
+  // 帶下來的網址顯示，要另外呼叫 Server Action 現查現簽 signed URL，
+  // 避免在 dashboard/page.tsx 一次幫「全部」車輛的證件照片簽 URL（那些
+  // 車大多數編輯表單根本不會被打開，沒必要預先簽一次）。
+  const [existingSellerPhotos, setExistingSellerPhotos] = useState<{ id: string; url: string }[]>([]);
+  useEffect(() => {
+    if (mode !== "edit" || !car) return;
+    let cancelled = false;
+    getCarSellerIdPhotos(car.id).then((photos) => {
+      if (!cancelled) setExistingSellerPhotos(photos);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, car?.id]);
+
+  async function handleRemoveSellerPhoto(photoId: string) {
+    setExistingSellerPhotos((prev) => prev.filter((p) => p.id !== photoId));
+    await deleteCarSellerIdPhoto(photoId);
+  }
 
   // 2026-08-31 新增：安安要求「新增車輛入庫」時，里程/年份/顏色/排氣量/
   // 車牌號碼/照片/開價/車型分類這幾項一定要填，不然不給新增——但只限
@@ -228,8 +265,42 @@ export function CarFormModal({
               ))}
             </datalist>
 
-            <div className="mt-3">
+            <div className="mt-3 grid grid-cols-2 gap-3">
               <Field label="VIN 車身號碼" name="vin" defaultValue={car?.vin ?? ""} />
+              {/* 2026-09-06 新增：引擎號碼，跟 VIN 是不同的兩組編號，見
+                  types.ts 對 Car.engine_number 的說明。 */}
+              <Field label="引擎號碼" name="engine_number" defaultValue={car?.engine_number ?? ""} />
+            </div>
+
+            <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
+              {/* 2026-09-06 新增：跟競品 Hocar 比較後補上的「車輛來源」
+                  分類，選填、不強制回填舊資料。 */}
+              <div>
+                <label className="block text-sm font-medium text-neutral-700">車輛來源</label>
+                <select
+                  name="source_category"
+                  defaultValue={car?.source_category ?? ""}
+                  className={INPUT_CLASS + " mt-1"}
+                >
+                  <option value="">未分類</option>
+                  {VALID_SOURCE_CATEGORIES.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex items-end pb-2">
+                <label className="flex items-center gap-2 text-sm text-neutral-700">
+                  <input
+                    type="checkbox"
+                    name="has_spare_key"
+                    defaultChecked={car?.has_spare_key ?? false}
+                    className="h-4 w-4 rounded border-neutral-300 text-[#BFA074] focus:ring-[#BFA074]"
+                  />
+                  有備用鑰匙
+                </label>
+              </div>
             </div>
 
             <div className="mt-3">
@@ -428,6 +499,24 @@ export function CarFormModal({
                   defaultValue={car?.tax_amount != null ? String(car.tax_amount) : ""}
                   placeholder="每台車稅率不同，請自行填實際金額"
                 />
+                {/* 2026-09-06 新增：「來源帳務分類」——這筆車源的錢要記在
+                    內帳還是外帳，會計內部用，屬於財務敏感資訊，跟其他
+                    成本欄位一樣只有 canViewCost 才看得到/填得到。 */}
+                <div>
+                  <label className="block text-sm font-medium text-neutral-700">來源帳務分類</label>
+                  <select
+                    name="source_ledger_type"
+                    defaultValue={car?.source_ledger_type ?? ""}
+                    className={INPUT_CLASS + " mt-1"}
+                  >
+                    <option value="">未指定</option>
+                    {VALID_SOURCE_LEDGER_TYPES.map((t) => (
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
               <p className="mt-2 text-xs text-neutral-400">
                 「付款方式」決定這筆收購進價要從「資金總覽」的現金池還是銀行池扣款，請務必據實選擇，才能讓水池餘額跟實際狀況對得上。
@@ -473,6 +562,7 @@ export function CarFormModal({
               <input type="hidden" name="tax_amount" value={car?.tax_amount ?? ""} />
               <input type="hidden" name="detailing_cost" value={car?.detailing_cost ?? ""} />
               <input type="hidden" name="repair_cost" value={car?.repair_cost ?? ""} />
+              <input type="hidden" name="source_ledger_type" value={car?.source_ledger_type ?? ""} />
             </>
           )}
 
@@ -656,6 +746,85 @@ export function CarFormModal({
             </>
           )}
 
+          {/* 賣家資訊：2026-09-06 新增，安安要求「每一台車」都記錄賣家的
+              姓名/身分證/地址/生日/證件照，不像上面「二胎／人頭車合作
+              紀錄」只在特定情境才填——這是完全獨立的另一件事，也沒有
+              永久鎖定的邏輯，隨時可以修改。跟收購成本一樣屬於財務/個資
+              敏感資訊，同一套 canViewCost 權限控管。 */}
+          {canViewCost ? (
+            <Accordion
+              title="賣家資訊"
+              defaultOpen={!!car?.seller_name || !!car?.seller_id_number}
+            >
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                <Field label="賣家姓名" name="seller_name" defaultValue={car?.seller_name ?? ""} />
+                <Field label="賣家身分證字號" name="seller_id_number" defaultValue={car?.seller_id_number ?? ""} />
+                <Field
+                  label="賣家生日"
+                  name="seller_birthdate"
+                  type="date"
+                  defaultValue={car?.seller_birthdate ?? ""}
+                />
+              </div>
+              <div className="mt-3">
+                <Field label="賣家地址" name="seller_address" defaultValue={car?.seller_address ?? ""} />
+              </div>
+              <div className="mt-3">
+                <label className="block text-sm font-medium text-neutral-700">
+                  賣家證件照片（可一次選多張，例如身分證正反面）
+                </label>
+                <input
+                  type="file"
+                  name="seller_id_photos"
+                  accept="image/*"
+                  multiple
+                  onChange={onSellerPhotosChange}
+                  className="mt-1 block w-full text-sm text-neutral-600 file:mr-3 file:rounded-lg file:border-0 file:bg-[#BFA074] file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-white hover:file:bg-[#AD9066]"
+                />
+                {sellerPhotoCompressing && (
+                  <p className="mt-1 text-xs text-neutral-400">圖片壓縮中…</p>
+                )}
+                {!sellerPhotoCompressing && selectedSellerPhotoNames.length > 0 && (
+                  <p className="mt-1 text-xs text-neutral-500">
+                    已選 {selectedSellerPhotoNames.length} 張：{selectedSellerPhotoNames.join("、")}
+                  </p>
+                )}
+                {existingSellerPhotos.length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {existingSellerPhotos.map((p) => (
+                      <div key={p.id} className="relative">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={p.url}
+                          alt="賣家證件照片"
+                          className="h-16 w-16 rounded-lg border border-neutral-200 object-cover"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveSellerPhoto(p.id)}
+                          aria-label="移除這張照片"
+                          className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-neutral-800/80 text-xs text-white hover:bg-red-600"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <p className="mt-1 text-xs text-neutral-400">
+                  🔒 證件照片存放於私有空間，不會公開顯示，僅有檢視成本權限的人看得到。
+                </p>
+              </div>
+            </Accordion>
+          ) : (
+            <>
+              <input type="hidden" name="seller_name" value={car?.seller_name ?? ""} />
+              <input type="hidden" name="seller_id_number" value={car?.seller_id_number ?? ""} />
+              <input type="hidden" name="seller_address" value={car?.seller_address ?? ""} />
+              <input type="hidden" name="seller_birthdate" value={car?.seller_birthdate ?? ""} />
+            </>
+          )}
+
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label
@@ -770,10 +939,10 @@ export function CarFormModal({
             </button>
             <button
               type="submit"
-              disabled={pending || photoCompressing}
+              disabled={pending || photoCompressing || sellerPhotoCompressing}
               className="rounded-lg bg-[#BFA074] px-3 py-1.5 text-sm font-medium text-white transition hover:bg-[#AD9066] disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {pending ? "儲存中…" : photoCompressing ? "圖片處理中…" : "儲存"}
+              {pending ? "儲存中…" : photoCompressing || sellerPhotoCompressing ? "圖片處理中…" : "儲存"}
             </button>
           </div>
         </form>

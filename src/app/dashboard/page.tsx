@@ -63,7 +63,10 @@ export default async function DashboardPage() {
         // 影響），只是後台畫面重新整理後看起來又「跳回」未勾選，容易讓人
         // 誤以為存檔失敗、忍不住重複勾選重存。三個都補進來後，表單/卡片/
         // 列表才會忠實反映資料庫目前的值。
-        "id, tenant_id, brand, model_name, year, license_year, mileage, engine_cc, transmission, color, license_plate, vin, certification, equipment_tags, condition_notes, status, purchase_price, transfer_fee, detailing_cost, repair_cost, floor_price, selling_price, final_price, final_cost_price, closed_at, closed_prep_cost, closed_total_cost, paid_amount, payment_method, purchase_account_id, payment_note, purchased_by, transfer_date, transfer_status, inspection_agency, inspection_date, inspection_status, title_at_company, nominee_company, nominee_days, nominee_start_date, id_return_date, has_used_as_nominee, is_public, body_type, is_featured, is_large_card, image_url, created_by, created_at, deleted_at"
+        // 2026-09-06：補進新增的引擎號碼/備用鑰匙/車輛來源/來源帳務分類/
+        // 賣家資訊七欄——沒補進這個白名單的話，跟上面 body_type 那次的
+        // 教訓一樣，後台編輯車輛表單會永遠讀不到這些欄位目前的值。
+        "id, tenant_id, brand, model_name, year, license_year, mileage, engine_cc, transmission, color, license_plate, vin, engine_number, has_spare_key, source_category, source_ledger_type, seller_name, seller_id_number, seller_address, seller_birthdate, certification, equipment_tags, condition_notes, status, purchase_price, transfer_fee, detailing_cost, repair_cost, floor_price, selling_price, final_price, final_cost_price, closed_at, closed_prep_cost, closed_total_cost, paid_amount, payment_method, purchase_account_id, payment_note, purchased_by, transfer_date, transfer_status, inspection_agency, inspection_date, inspection_status, title_at_company, nominee_company, nominee_days, nominee_start_date, id_return_date, has_used_as_nominee, is_public, body_type, is_featured, is_large_card, image_url, created_by, created_at, deleted_at"
       )
       .order("created_at", { ascending: false }),
     supabase
@@ -79,7 +82,7 @@ export default async function DashboardPage() {
     supabase
       .from("customers")
       .select(
-        "id, tenant_id, name, phone, interested_model, budget_min, budget_max, follow_up_status, line_id, note, owner_profile_id, created_at"
+        "id, tenant_id, name, phone, interested_model, budget_min, budget_max, follow_up_status, line_id, note, customer_type, owner_profile_id, created_at"
       )
       .order("created_at", { ascending: false }),
     supabase
