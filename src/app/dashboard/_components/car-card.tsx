@@ -24,7 +24,9 @@ export function CarCard({
    * 看得到成本的店長、或被個別開放 canViewCost 的一般員工，都不該因此
    * 連帶看到別人的抽成金額。只有「看得到全體薪資」（canViewAllSalary）
    * 或「會計/財務管理」（canManageFinance）才會是 true，見 cars-manager.tsx
-   * 怎麼算這個值。 */
+   * 怎麼算這個值。2026-09-06：同一個開關也管「收購獎金」
+   * （closed_acquisition_bonus_cost）的顯示——跟業務抽成一樣是薪資性質
+   * 的資訊。 */
   canViewCommission: boolean;
   canEditCars: boolean;
   /** 這輛車已核准撥款的整備維修費用加總，見 cars-manager.tsx 的
@@ -49,22 +51,28 @@ export function CarCard({
   //   成本 purchaseCost = 收購進價（car.purchase_price）
   //   抽成 commissionCost = 已結帳車輛的 closed_commission_cost，未結帳
   //          車輛一律是 0（deal 還沒交車結案，也就還沒有抽成快照）
-  //   開銷 operatingCost = 純粹的整備＋規費＋稅金，不含抽成——未結帳即時
-  //          算 repairCost＋transfer_fee＋tax_amount；已結帳則用
+  //   開銷 operatingCost = 純粹的整備＋規費＋稅金，不含抽成／收購獎金——
+  //          未結帳即時算 repairCost＋transfer_fee＋tax_amount；已結帳則用
   //          closed_total_cost 反推：closed_total_cost 本身 = 成本＋開銷
-  //          ＋抽成，所以 開銷 = closed_total_cost − 成本 − 抽成
-  //   顯示的合計 visibleTotal = 成本 ＋ 開銷 ＋（有權限才加）抽成——沒有
-  //          canViewCommission 的人，合計就完全不含抽成，不會露出任何
-  //          能讓人用「合計－已知項目」反推出抽成的線索。
+  //          ＋抽成＋收購獎金，所以 開銷 = closed_total_cost − 成本 −
+  //          抽成 − 收購獎金
+  //   顯示的合計 visibleTotal = 成本 ＋ 開銷 ＋（有權限才加）抽成／收購
+  //          獎金——沒有 canViewCommission 的人，合計就完全不含這兩筆，
+  //          不會露出任何能讓人用「合計－已知項目」反推出來的線索。
+  //
+  // 2026-09-06 新增：收購獎金（撥給收購／採購人）跟業務抽成是同一個
+  // 隱私層級的薪資性質資訊，一律用同一個 canViewCommission 開關、同一套
+  // 拆帳方式處理，見上面 canViewCommission 的參數說明。
   const purchaseCost = Number(car.purchase_price);
   const commissionCost = car.closed_at != null ? Number(car.closed_commission_cost ?? 0) : 0;
+  const acquisitionBonusCost = car.closed_at != null ? Number(car.closed_acquisition_bonus_cost ?? 0) : 0;
   const operatingCost =
     car.closed_at != null
-      ? Number(car.closed_total_cost ?? 0) - purchaseCost - commissionCost
+      ? Number(car.closed_total_cost ?? 0) - purchaseCost - commissionCost - acquisitionBonusCost
       : repairCost + Number(car.transfer_fee ?? 0) + Number(car.tax_amount ?? 0);
-  const showCommission = canViewCommission && commissionCost > 0;
-  const visibleTotal = purchaseCost + operatingCost + (showCommission ? commissionCost : 0);
-  const totalLabel = showCommission ? "成本＋開銷＋抽成合計" : "成本＋開銷合計";
+  const showCommission = canViewCommission && (commissionCost > 0 || acquisitionBonusCost > 0);
+  const visibleTotal = purchaseCost + operatingCost + (showCommission ? commissionCost + acquisitionBonusCost : 0);
+  const totalLabel = showCommission ? "成本＋開銷＋抽成/獎金合計" : "成本＋開銷合計";
   return (
     // 2026-08-30：「藝廊卡片」改成大圖卡片——圖片區域從 16/10 拉高到
     // 4/3，讓照片占卡片的比例明顯變大；標題、價格字級也一併放大，
@@ -130,11 +138,19 @@ export function CarCard({
                     {formatCurrency(operatingCost)}
                   </span>
                 </div>
-                {showCommission && (
+                {showCommission && commissionCost > 0 && (
                   <div className="flex items-center justify-between gap-3 text-xs text-neutral-500">
                     <span>業務抽成</span>
                     <span className="font-medium tabular-nums text-neutral-700">
                       {formatCurrency(commissionCost)}
+                    </span>
+                  </div>
+                )}
+                {showCommission && acquisitionBonusCost > 0 && (
+                  <div className="flex items-center justify-between gap-3 text-xs text-neutral-500">
+                    <span>收購獎金</span>
+                    <span className="font-medium tabular-nums text-neutral-700">
+                      {formatCurrency(acquisitionBonusCost)}
                     </span>
                   </div>
                 )}

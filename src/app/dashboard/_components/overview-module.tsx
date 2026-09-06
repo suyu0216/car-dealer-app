@@ -14,8 +14,8 @@
 // 要求一致——不能因為這是「首頁」就放寬，一般員工登入後如果沒有這個
 // 權限，首頁只會看到台數/筆數這類不涉及金額的營運指標卡片。已實現毛利
 // 這張卡片再進一步比照 analytics-module.tsx 的作法：沒有 canViewCommission
-// 的人看到的毛利會把業務抽成加回去、並標註「不含業務抽成」，避免從毛利
-// 數字反推出抽成金額。
+// 的人看到的毛利會把業務抽成＋收購獎金加回去、並標註「不含業務抽成/收購
+// 獎金」，避免從毛利數字反推出這兩筆金額。
 import type { Car, Customer, Deal, RepairItem, TradeInRequest } from "@/lib/supabase/types";
 import { carDisplayName, formatCurrency, formatDate, taiwanDateParts } from "@/lib/format";
 import {
@@ -96,8 +96,13 @@ export function OverviewModule({
   const revenueThisMonth = closedThisMonthCars.reduce((sum, c) => sum + Number(c.final_price ?? c.selling_price ?? 0), 0);
   const realizedProfitThisMonth = closedThisMonthCars.reduce((sum, c) => {
     const revenue = c.final_price ?? c.selling_price ?? 0;
+    // 2026-09-06：收購獎金比照業務抽成一起處理，理由見 analytics-module.tsx
+    // 開頭的隱私說明——兩筆都是薪資性質，沒有 canViewCommission 的人一律
+    // 從成本扣掉（毛利加回來）。
     const commissionCost = Number(c.closed_commission_cost ?? 0);
-    const cost = Number(c.closed_total_cost ?? 0) - (canViewCommission ? 0 : commissionCost);
+    const acquisitionBonusCost = Number(c.closed_acquisition_bonus_cost ?? 0);
+    const cost =
+      Number(c.closed_total_cost ?? 0) - (canViewCommission ? 0 : commissionCost + acquisitionBonusCost);
     return sum + (Number(revenue) - cost);
   }, 0);
 
@@ -186,7 +191,7 @@ export function OverviewModule({
           <MoneyCard
             label="本月已實現毛利"
             value={realizedProfitThisMonth}
-            hint={canViewCommission ? undefined : "不含業務抽成"}
+            hint={canViewCommission ? undefined : "不含業務抽成/收購獎金"}
           />
           <MoneyCard label="在庫總成本（含整備）" value={inventoryAssetCost} hint="即時計算，尚未結帳" />
         </div>

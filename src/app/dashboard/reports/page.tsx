@@ -99,7 +99,10 @@ export default function ReportsPage() {
       supabase
         .from("cars")
         .select(
-          "id, brand, model_name, license_plate, purchase_price, closed_prep_cost, transfer_fee, tax_amount, closed_commission_cost, closed_total_cost, final_price, closed_at, status, created_at"
+          // 2026-09-06 補進 closed_acquisition_bonus_cost（收購獎金封存
+          // 快照）——跟業務抽成一樣是真實成本，沒補進來的話單台車結算／
+          // 營運報表的「淨利」會漏算這筆錢。
+          "id, brand, model_name, license_plate, purchase_price, closed_prep_cost, transfer_fee, tax_amount, closed_commission_cost, closed_acquisition_bonus_cost, closed_total_cost, final_price, closed_at, status, created_at"
         ),
       supabase
         .from("deals")

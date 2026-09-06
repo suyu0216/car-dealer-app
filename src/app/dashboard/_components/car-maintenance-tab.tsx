@@ -83,6 +83,9 @@ export function CarMaintenanceTab({
   // 保證卡片上顯示的每一項成本加起來一定等於顯示的總成本，不會因為
   // 「看得到的項目」跟「看不到的抽成」兜不起來。
   const commissionCost = isClosed ? Number(car.closed_commission_cost ?? 0) : 0;
+  // 2026-09-06 新增：收購獎金跟業務抽成一樣，未結帳一律 0（合約還沒交車
+  // 結案就不會有封存快照）。
+  const acquisitionBonusCost = isClosed ? Number(car.closed_acquisition_bonus_cost ?? 0) : 0;
   const revenueBasis = car.final_price ?? car.selling_price ?? null;
 
   return (
@@ -100,6 +103,7 @@ export function CarMaintenanceTab({
           transferFee={car.transfer_fee}
           taxAmount={car.tax_amount}
           commissionCost={commissionCost}
+          acquisitionBonusCost={acquisitionBonusCost}
           canViewCommission={canViewCommission}
           revenueBasis={revenueBasis}
           isFinalPrice={car.final_price != null}
@@ -128,6 +132,7 @@ function VehiclePnlCard({
   transferFee,
   taxAmount,
   commissionCost,
+  acquisitionBonusCost,
   canViewCommission,
   revenueBasis,
   isFinalPrice,
@@ -143,6 +148,9 @@ function VehiclePnlCard({
   /** 已結帳車輛的業務抽成快照，未結帳一律 0——是不是薪資隱私、要不要
    * 顯示看 canViewCommission。 */
   commissionCost: number;
+  /** 2026-09-06 新增：已結帳車輛的收購獎金快照，未結帳一律 0——跟業務
+   * 抽成同一個隱私開關 canViewCommission。 */
+  acquisitionBonusCost: number;
   /** 業務抽成是薪資隱私，只有「看得到全體薪資」或「會計/財務管理」才是
    * true，見 cars-manager.tsx 怎麼算這個值、car-card.tsx 的同一套說明。 */
   canViewCommission: boolean;
@@ -150,13 +158,19 @@ function VehiclePnlCard({
   isFinalPrice: boolean;
 }) {
   const showCommission = canViewCommission && commissionCost > 0;
+  const showAcquisitionBonus = canViewCommission && acquisitionBonusCost > 0;
   // 車輛總成本／淨利一律用「看得到的項目」直接加總，不是讀 closed_total_cost
   // 快照——沒有 canViewCommission 的人，這裡算出來的總成本／淨利就完全
-  // 不含抽成，卡片上顯示的每一項成本（收購價/維修整備費/規費/稅金〔/
-  // 抽成〕）加起來一定剛好等於顯示的總成本，不會有「看得到的項目兜不出
-  // 顯示總數」的落差、也不會被拿來反推抽成金額。
+  // 不含抽成/收購獎金，卡片上顯示的每一項成本（收購價/維修整備費/規費/
+  // 稅金〔/抽成〕〔/收購獎金〕）加起來一定剛好等於顯示的總成本，不會有
+  // 「看得到的項目兜不出顯示總數」的落差、也不會被拿來反推這兩筆金額。
   const totalCost =
-    purchasePrice + prepCost + Number(transferFee ?? 0) + Number(taxAmount ?? 0) + (showCommission ? commissionCost : 0);
+    purchasePrice +
+    prepCost +
+    Number(transferFee ?? 0) +
+    Number(taxAmount ?? 0) +
+    (showCommission ? commissionCost : 0) +
+    (showAcquisitionBonus ? acquisitionBonusCost : 0);
   const profit = revenueBasis != null ? revenueBasis - totalCost : null;
   return (
     <section className="rounded-2xl border border-neutral-200 bg-[#F8F9FA] p-4">
@@ -178,6 +192,12 @@ function VehiclePnlCard({
             <CostChip label="業務抽成" value={commissionCost} />
           </>
         )}
+        {showAcquisitionBonus && (
+          <>
+            <span className="text-neutral-300">+</span>
+            <CostChip label="收購獎金" value={acquisitionBonusCost} />
+          </>
+        )}
         <span className="text-neutral-300">=</span>
         <CostChip label="車輛總成本" value={totalCost} strong />
       </div>
@@ -194,7 +214,13 @@ function VehiclePnlCard({
         <div>
           <p className="text-[11px] text-neutral-400">
             {isFinalPrice ? "實際淨利" : "預估毛利"}
-            {!showCommission && commissionCost > 0 ? "（不含業務抽成）" : ""}
+            {(() => {
+              const hiddenParts = [
+                !showCommission && commissionCost > 0 ? "業務抽成" : null,
+                !showAcquisitionBonus && acquisitionBonusCost > 0 ? "收購獎金" : null,
+              ].filter(Boolean);
+              return hiddenParts.length > 0 ? `（不含${hiddenParts.join("/")}）` : "";
+            })()}
           </p>
           <p
             className={

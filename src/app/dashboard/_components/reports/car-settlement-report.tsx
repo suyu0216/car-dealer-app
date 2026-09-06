@@ -1,11 +1,13 @@
 "use client";
 
 // 「單台車結算報表」——每一台已結案（賣出並結帳封存）車輛的完整財務
-// 拆解：收購成本／整備成本／過戶費／稅金／（業務抽成）／總成本／成交
-// 金額／毛利／淨利，一台車一列，對齊 Hocar 的「單台車結算報表」（見這次
-// 金流架構開頭的競品落差分析）。全部讀 cars 表結帳當下封存的快照欄位
-// （closed_*），不受之後任何異動影響，理由跟 analytics-module.tsx／
-// profit-share-module.tsx 讀同一批快照欄位的原因一致。
+// 拆解：收購成本／整備成本／過戶費／稅金／（業務抽成）／（收購獎金）／
+// 總成本／成交金額／毛利／淨利，一台車一列，對齊 Hocar 的「單台車結算
+// 報表」（見這次金流架構開頭的競品落差分析）。全部讀 cars 表結帳當下
+// 封存的快照欄位（closed_*），不受之後任何異動影響，理由跟
+// analytics-module.tsx／profit-share-module.tsx 讀同一批快照欄位的原因
+// 一致。2026-09-06 新增收購獎金（撥給收購／採購人）——跟業務抽成同一個
+// 隱私層級，一起用 canViewCommission 控制要不要顯示、要不要算進淨利。
 import { useMemo, useState } from "react";
 import type { Car } from "@/lib/supabase/types";
 import { formatCurrency, formatDate, currentTaiwanDateKey } from "@/lib/format";
@@ -24,6 +26,7 @@ export type CarSettlementSlice = Pick<
   | "transfer_fee"
   | "tax_amount"
   | "closed_commission_cost"
+  | "closed_acquisition_bonus_cost"
   | "closed_total_cost"
   | "final_price"
   | "closed_at"
@@ -51,9 +54,9 @@ export function CarSettlementReport({
   canViewCommission,
 }: {
   cars: CarSettlementSlice[];
-  /** 淨利（含業務抽成）跟抽成欄位本身有隱私考量，只有 canViewAllSalary
-   * 或 canManageFinance 的人看得到，理由跟 analytics-module.tsx 的
-   * canViewCommission 完全一樣。 */
+  /** 淨利（含業務抽成／收購獎金）跟這兩個欄位本身有隱私考量，只有
+   * canViewAllSalary 或 canManageFinance 的人看得到，理由跟
+   * analytics-module.tsx 的 canViewCommission 完全一樣。 */
   canViewCommission: boolean;
 }) {
   const [preset, setPreset] = useState<DateRangePreset>("thisMonth");
@@ -67,10 +70,11 @@ export function CarSettlementReport({
       .map((c) => {
         const totalCost = Number(c.closed_total_cost ?? 0);
         const commission = Number(c.closed_commission_cost ?? 0);
+        const acquisitionBonus = Number(c.closed_acquisition_bonus_cost ?? 0);
         const finalPrice = Number(c.final_price ?? 0);
-        const grossProfit = finalPrice - (totalCost - commission);
+        const grossProfit = finalPrice - (totalCost - commission - acquisitionBonus);
         const netProfit = finalPrice - totalCost;
-        return { ...c, totalCost, commission, finalPrice, grossProfit, netProfit };
+        return { ...c, totalCost, commission, acquisitionBonus, finalPrice, grossProfit, netProfit };
       })
       .sort((a, b) => (a.closed_at! < b.closed_at! ? 1 : -1));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -88,7 +92,7 @@ export function CarSettlementReport({
 
   function handleExport() {
     const header = canViewCommission
-      ? ["結案日期", "車輛", "車牌", "收購成本", "整備成本", "過戶費", "稅金", "業務抽成", "總成本", "成交金額", "毛利", "淨利"]
+      ? ["結案日期", "車輛", "車牌", "收購成本", "整備成本", "過戶費", "稅金", "業務抽成", "收購獎金", "總成本", "成交金額", "毛利", "淨利"]
       : ["結案日期", "車輛", "車牌", "收購成本", "整備成本", "過戶費", "稅金", "總成本", "成交金額", "毛利"];
     const dataRows = rows.map((r) =>
       canViewCommission
@@ -101,6 +105,7 @@ export function CarSettlementReport({
             r.transfer_fee ?? 0,
             r.tax_amount ?? 0,
             r.commission,
+            r.acquisitionBonus,
             r.totalCost,
             r.finalPrice,
             r.grossProfit,
@@ -146,9 +151,9 @@ export function CarSettlementReport({
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <StatCard label="結案台數" value={`${rows.length} 輛`} />
         <StatCard label="成交金額合計" value={formatCurrency(totals.final)} />
-        <StatCard label="毛利合計（不含抽成）" value={formatCurrency(totals.gross)} tone={totals.gross >= 0 ? "up" : "down"} />
+        <StatCard label="毛利合計（不含抽成/獎金）" value={formatCurrency(totals.gross)} tone={totals.gross >= 0 ? "up" : "down"} />
         {canViewCommission && (
-          <StatCard label="淨利合計（含抽成）" value={formatCurrency(totals.net)} tone={totals.net >= 0 ? "up" : "down"} />
+          <StatCard label="淨利合計（含抽成/獎金）" value={formatCurrency(totals.net)} tone={totals.net >= 0 ? "up" : "down"} />
         )}
       </div>
 
@@ -163,6 +168,7 @@ export function CarSettlementReport({
               <th className="px-4 py-2 text-right font-medium">過戶費</th>
               <th className="px-4 py-2 text-right font-medium">稅金</th>
               {canViewCommission && <th className="px-4 py-2 text-right font-medium">業務抽成</th>}
+              {canViewCommission && <th className="px-4 py-2 text-right font-medium">收購獎金</th>}
               <th className="px-4 py-2 text-right font-medium">總成本</th>
               <th className="px-4 py-2 text-right font-medium">成交金額</th>
               <th className="px-4 py-2 text-right font-medium">毛利</th>
@@ -172,7 +178,7 @@ export function CarSettlementReport({
           <tbody className="divide-y divide-neutral-100">
             {rows.length === 0 && (
               <tr>
-                <td colSpan={canViewCommission ? 10 : 9} className="px-4 py-8 text-center text-neutral-400">
+                <td colSpan={canViewCommission ? 11 : 9} className="px-4 py-8 text-center text-neutral-400">
                   這段期間沒有結案車輛
                 </td>
               </tr>
@@ -191,6 +197,9 @@ export function CarSettlementReport({
                 <td className="whitespace-nowrap px-4 py-2 text-right text-neutral-600">{formatCurrency(r.tax_amount ?? 0)}</td>
                 {canViewCommission && (
                   <td className="whitespace-nowrap px-4 py-2 text-right text-neutral-600">{formatCurrency(r.commission)}</td>
+                )}
+                {canViewCommission && (
+                  <td className="whitespace-nowrap px-4 py-2 text-right text-neutral-600">{formatCurrency(r.acquisitionBonus)}</td>
                 )}
                 <td className="whitespace-nowrap px-4 py-2 text-right font-semibold text-neutral-800">{formatCurrency(r.totalCost)}</td>
                 <td className="whitespace-nowrap px-4 py-2 text-right font-semibold text-neutral-800">{formatCurrency(r.finalPrice)}</td>

@@ -136,7 +136,9 @@ export function CarsManager({
   // 店長、或被個別開放 canViewCost 的一般員工，不該連帶看到別人的抽成。
   // 只有「看得到全體薪資」（canViewAllSalary，會計/老闆預設有）或
   // 「會計/財務管理」（canManageFinance）才看得到，見 car-card.tsx／
-  // car-detail-modal.tsx 怎麼用這個值。
+  // car-detail-modal.tsx 怎麼用這個值。2026-09-06：同一個開關也管
+  // 「收購獎金」（closed_acquisition_bonus_cost）要不要顯示，兩者是同一
+  // 個隱私層級的薪資性質資訊。
   const canViewCommission = permissions.canViewAllSalary || permissions.canManageFinance;
 
   function toggleShowCostOnCards() {

@@ -14,7 +14,8 @@
 //   月毛利 = Σ (車輛成交價 − 車輛結帳總成本)，只算「已結案封存
 //            （status='sold' 且 closed_at 有值）且結案月份等於選定月份」
 //            的車輛——closed_total_cost 這個結帳快照本身已經包含業務
-//            抽成，這裡不能再從 deals 表另外扣一次抽成，否則會重複扣。
+//            抽成＋收購獎金（2026-09-06 新增），這裡不能再從 deals 表
+//            另外扣一次，否則會重複扣。
 //   月營運費用 = Σ 公司開銷金額，類別不是「人事薪資」、支出日期在選定月份
 //   月人事底薪 = Σ 公司開銷金額，類別是「人事薪資」、支出日期在選定月份
 //   月淨利 = 月毛利 − 月營運費用 − 月人事底薪
@@ -36,8 +37,8 @@ export type ProfitShareCar = {
   final_price: number | null;
   selling_price: number | null;
   /** 結帳（售出）封存當下算出的總成本快照（進貨價＋整備費＋過戶費＋
-   * 稅金＋業務抽成），只有 status='sold' 才會有值，見 cars-actions.ts
-   * 的 computeClosingFields()。 */
+   * 稅金＋業務抽成＋收購獎金），只有 status='sold' 才會有值，見
+   * cars-actions.ts 的 computeClosingFields()。 */
   closed_total_cost: number | null;
   /** 結帳封存日期，月份歸屬看這個欄位，不是車輛建立日期。 */
   closed_at: string | null;

@@ -45,7 +45,9 @@ export function CarDetailModal({
    * 薪資」（canViewAllSalary）或「會計/財務管理」（canManageFinance）
    * 才會是 true（見 cars-manager.tsx 怎麼算這個值）。canViewCost 是
    * 「能不能看成本結構這個區塊」，canViewCommission 是「這個區塊裡的
-   * 抽成金額能不能再進一步看到」，兩者互相獨立，缺一都看不到。 */
+   * 抽成金額能不能再進一步看到」，兩者互相獨立，缺一都看不到。2026-09-06：
+   * 同一個開關也管「收購獎金」（closed_acquisition_bonus_cost）的顯示，
+   * 跟業務抽成是同一個隱私層級。 */
   canViewCommission: boolean;
   /** 2026-08-31 新增：可以檢視「最終成本價格」——比 canViewCost 更嚴格，
    * 預設只有會計/老闆看得到，即使有 canViewCost 也不例外，見
@@ -107,15 +109,16 @@ export function CarDetailModal({
   // closed_commission_cost：這輛車結帳（售出）當下封存的業務抽成快照，
   // 只有已經售出的車輛才會有值，見 cars-actions.ts computeClosingFields()
   // 的說明。直接讀車輛本身的欄位，不需要另外把 deals 資料傳進這個
-  // 元件——結完帳的數字本來就不會再變動，讀快照即可。
+  // 元件——結完帳的數字本來就不會再變動，讀快照即可。2026-09-06 新增
+  // closed_acquisition_bonus_cost（收購獎金封存快照）也是同一套讀法。
   //
   // 2026-08-30：安安反映業務抽成是薪資隱私，不希望其他員工從「車輛總
   // 成本」這個合計反推出來——所以這裡拆成 operatingSpent（收購進價＋
-  // 過戶費/規費＋稅金＋已核准整備/美容/其他，不含抽成）跟 commissionCost
-  // 兩塊，只有 canViewCommission 才把抽成併入顯示用的 totalSpent，否則
-  // 合計就完全不含抽成，也不會另外顯示抽成那一行，避免看得到成本、但
-  // 看不到全體薪資的人（例如預設的店長）能用「合計 − 已知項目」反推出
-  // 抽成金額。
+  // 過戶費/規費＋稅金＋已核准整備/美容/其他，不含抽成/收購獎金）跟
+  // commissionCost／acquisitionBonusCost 兩塊，只有 canViewCommission 才
+  // 把這兩筆併入顯示用的 totalSpent，否則合計就完全不含這兩筆，也不會
+  // 另外顯示這兩行，避免看得到成本、但看不到全體薪資的人（例如預設的
+  // 店長）能用「合計 − 已知項目」反推出金額。
   const operatingSpent =
     Number(car.purchase_price) +
     Number(car.transfer_fee ?? 0) +
@@ -124,8 +127,12 @@ export function CarDetailModal({
     approvedDetailingCost +
     approvedOtherCost;
   const commissionCost = Number(car.closed_commission_cost ?? 0);
+  const acquisitionBonusCost = Number(car.closed_acquisition_bonus_cost ?? 0);
   const showCommission = canViewCost && canViewCommission && car.closed_commission_cost != null;
-  const totalSpent = operatingSpent + (showCommission ? commissionCost : 0);
+  const showAcquisitionBonus =
+    canViewCost && canViewCommission && car.closed_acquisition_bonus_cost != null;
+  const totalSpent =
+    operatingSpent + (showCommission ? commissionCost : 0) + (showAcquisitionBonus ? acquisitionBonusCost : 0);
 
   function handleQuickStatus(status: Car["status"]) {
     // 「設為已售出」原本只改狀態，完全不會問成交價，導致「定價」區塊的
@@ -365,6 +372,9 @@ export function CarDetailModal({
               <Money label="稅金/發票稅金" value={car.tax_amount} mask={!canViewCost} />
               {showCommission && (
                 <Money label="業務抽成（結帳封存）" value={car.closed_commission_cost} />
+              )}
+              {showAcquisitionBonus && (
+                <Money label="收購獎金（結帳封存）" value={car.closed_acquisition_bonus_cost} />
               )}
               <Money label="整備維修成本（已核准）" value={approvedRepairCost} mask={!canViewCost} />
               <Money label="整理美容成本（已核准）" value={approvedDetailingCost} mask={!canViewCost} />

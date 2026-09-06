@@ -1634,3 +1634,15 @@ create policy "identity_documents_super_admin_all"
 
 alter table public.deals
   add column if not exists acquisition_commission_amount numeric;
+
+-- =============================================================================
+-- 2026-09-06（第三次）：收購獎金也是這台車的真實成本——結帳（售出）封存
+-- 時比照業務抽成（closed_commission_cost）多封存一欄 closed_acquisition_
+-- bonus_cost，一起算進 closed_total_cost，「已實現毛利/淨利」等財務報表
+-- 才不會漏掉這筆真的付出去的錢。跟業務抽成同一套隱私保護：只有
+-- canViewAllSalary／canManageFinance 的人看得到這個數字，見
+-- cars-actions.ts computeClosingFields() 的說明。
+-- =============================================================================
+
+alter table public.cars
+  add column if not exists closed_acquisition_bonus_cost numeric;

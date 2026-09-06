@@ -128,6 +128,9 @@ interface ClosingFields {
   closed_at?: string | null;
   closed_prep_cost?: number | null;
   closed_commission_cost?: number | null;
+  /** 2026-09-06 新增：撥給收購／採購人的獎金，跟業務抽成一樣是這台車的
+   * 真實成本，封存邏輯完全對稱，見 computeClosingFields() 的說明。 */
+  closed_acquisition_bonus_cost?: number | null;
   closed_total_cost?: number | null;
 }
 
@@ -173,21 +176,30 @@ function computeNomineeFields(
 
 /**
  * 會計結帳邏輯核心：只有在「這次要把狀態改成 sold、而且之前不是 sold」
- * 的那一刻，才把當下已核准的維修整備費、對應合約的業務抽成加總，連同
- * 收購價/規費/稅金封存成 closed_prep_cost / closed_commission_cost /
+ * 的那一刻，才把當下已核准的維修整備費、對應合約的業務抽成＋收購獎金
+ * 加總，連同收購價/規費/稅金封存成 closed_prep_cost /
+ * closed_commission_cost / closed_acquisition_bonus_cost /
  * closed_total_cost，並記錄 closed_at。
  *
- * 業務抽成的來源：查這輛車底下狀態是「已交車」的合約（deals），取最新
- * 一筆的 commission_amount——正常情況一輛車只會有一筆已交車的合約，
- * 這裡容錯用「取最新」處理極少數重複建約的邊界情況。沒有對應合約，或
- * 合約沒填抽成，就當作 0。這樣不管是從「買賣合約」交車自動觸發
- * （syncCarStatusFromDeal），還是車輛詳情頁「設為已售出」快捷操作手動
- * 觸發，只要資料庫裡已經有這筆合約，抽成都會被正確封存進去，不用另外
- * 從呼叫端把抽成金額當參數一路傳進來。
+ * 業務抽成／收購獎金的來源：查這輛車底下狀態是「已交車」的合約（deals），
+ * 取最新一筆的 commission_amount／acquisition_commission_amount——正常
+ * 情況一輛車只會有一筆已交車的合約，這裡容錯用「取最新」處理極少數重複
+ * 建約的邊界情況。沒有對應合約，或合約沒填，就當作 0。這樣不管是從
+ * 「買賣合約」交車自動觸發（syncCarStatusFromDeal），還是車輛詳情頁
+ * 「設為已售出」快捷操作手動觸發，只要資料庫裡已經有這筆合約，這兩筆
+ * 錢都會被正確封存進去，不用另外從呼叫端當參數一路傳進來。
  *
- * 之後不管 repair_items 又核准了多少新項目、合約抽成事後又被改了多少，
- * 這輛車的已結帳數字都不會再變動 —— 車行經營數據看板統計「已實現毛利」
- * 時一律讀這幾個欄位，不會重新加總 repair_items／deals（見
+ * 2026-09-06 新增收購獎金：這是撥給「收購這台車的人」（cars.purchased_by）
+ * 的真實開銷，跟業務抽成一樣是這台車的成本，一律一起封存、一起計入
+ * closed_total_cost——不然「已實現毛利/淨利」等財務報表會漏算這筆真的
+ * 付出去的錢。隱私保護也完全比照業務抽成：只有 canViewAllSalary／
+ * canManageFinance 的人看得到，其餘顯示層（car-card.tsx／
+ * car-detail-modal.tsx／car-maintenance-tab.tsx／各報表）用同一個
+ * canViewCommission 開關同時管業務抽成跟收購獎金這兩筆錢。
+ *
+ * 之後不管 repair_items 又核准了多少新項目、合約抽成/獎金事後又被改了
+ * 多少，這輛車的已結帳數字都不會再變動 —— 車行經營數據看板統計「已實現
+ * 毛利」時一律讀這幾個欄位，不會重新加總 repair_items／deals（見
  * analytics-module.tsx）。
  *
  * 如果狀態從 sold 改回其他狀態（例如登記錯誤要更正），封存欄位會被清空，
@@ -195,7 +207,7 @@ function computeNomineeFields(
  * 會用當下最新的資料重新封存一次。
  *
  * 如果目標狀態是 sold、但這輛車本來就已經是 sold（只是重新存檔沒有真的
- * 換狀態），完全不動這三個欄位 —— 已經封存的數字不會因為編輯其他欄位
+ * 換狀態），完全不動這幾個欄位 —— 已經封存的數字不會因為編輯其他欄位
  * 而被悄悄重算。
  */
 async function computeClosingFields(
@@ -212,12 +224,13 @@ async function computeClosingFields(
   if (newStatus === "sold" && !wasSold) {
     let prepCost = 0;
     let commissionCost = 0;
+    let acquisitionBonusCost = 0;
     if (carId) {
       const [{ data: approved }, { data: deal }] = await Promise.all([
         supabase.from("repair_items").select("amount").eq("car_id", carId).eq("status", "approved"),
         supabase
           .from("deals")
-          .select("commission_amount")
+          .select("commission_amount, acquisition_commission_amount")
           .eq("car_id", carId)
           .eq("status", "delivered")
           .order("created_at", { ascending: false })
@@ -226,18 +239,32 @@ async function computeClosingFields(
       ]);
       prepCost = (approved ?? []).reduce((sum, r) => sum + Number(r.amount), 0);
       commissionCost = deal?.commission_amount != null ? Number(deal.commission_amount) : 0;
+      acquisitionBonusCost =
+        deal?.acquisition_commission_amount != null ? Number(deal.acquisition_commission_amount) : 0;
     }
     return {
       closed_at: new Date().toISOString(),
       closed_prep_cost: prepCost,
       closed_commission_cost: commissionCost,
+      closed_acquisition_bonus_cost: acquisitionBonusCost,
       closed_total_cost:
-        purchasePrice + prepCost + Number(transferFee ?? 0) + Number(taxAmount ?? 0) + commissionCost,
+        purchasePrice +
+        prepCost +
+        Number(transferFee ?? 0) +
+        Number(taxAmount ?? 0) +
+        commissionCost +
+        acquisitionBonusCost,
     };
   }
 
   if (newStatus !== "sold" && wasSold) {
-    return { closed_at: null, closed_prep_cost: null, closed_commission_cost: null, closed_total_cost: null };
+    return {
+      closed_at: null,
+      closed_prep_cost: null,
+      closed_commission_cost: null,
+      closed_acquisition_bonus_cost: null,
+      closed_total_cost: null,
+    };
   }
 
   return {};

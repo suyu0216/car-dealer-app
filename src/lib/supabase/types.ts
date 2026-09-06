@@ -209,6 +209,14 @@ export interface Car {
    * 這裡單獨留一欄是為了在車輛詳情頁把「業務抽成」跟其他成本分開顯示。
    * NULL＝尚未結帳，或結帳當下沒有對應的抽成。 */
   closed_commission_cost: number | null;
+  /** 2026-09-06 新增：結帳當下對應合約的「收購獎金」（撥給收購／採購人，
+   * 封存快照）——這也是這台車真實付出去的成本，已經計入 closed_total_cost。
+   * 跟 closed_commission_cost 是同一套設計：單獨留一欄是為了在車輛詳情頁
+   * 把「收購獎金」跟其他成本分開顯示，也是同一套隱私保護（只有
+   * canViewAllSalary／canManageFinance 才看得到，見 cars-actions.ts
+   * computeClosingFields() 的說明）。NULL＝尚未結帳，或結帳當下沒有對應
+   * 的收購獎金。 */
+  closed_acquisition_bonus_cost: number | null;
   closed_total_cost: number | null;
   // 進貨與付款追蹤
   paid_amount: number | null;

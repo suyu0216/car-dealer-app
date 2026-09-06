@@ -12,7 +12,14 @@ import { downloadCsv } from "@/lib/csv-export";
 
 export type CarTrendSlice = Pick<
   Car,
-  "id" | "created_at" | "closed_at" | "status" | "final_price" | "closed_total_cost" | "closed_commission_cost"
+  | "id"
+  | "created_at"
+  | "closed_at"
+  | "status"
+  | "final_price"
+  | "closed_total_cost"
+  | "closed_commission_cost"
+  | "closed_acquisition_bonus_cost"
 >;
 export type RepairItemTrendSlice = Pick<RepairItem, "id" | "amount" | "status" | "reviewed_at" | "created_at">;
 
@@ -31,8 +38,8 @@ type MetricKey = "revenue" | "grossProfit" | "netProfit" | "purchasedCount" | "s
 
 const METRICS: { key: MetricKey; label: string; isCurrency: boolean }[] = [
   { key: "revenue", label: "營收", isCurrency: true },
-  { key: "grossProfit", label: "毛利（不含抽成）", isCurrency: true },
-  { key: "netProfit", label: "淨利（含抽成）", isCurrency: true },
+  { key: "grossProfit", label: "毛利（不含抽成/獎金）", isCurrency: true },
+  { key: "netProfit", label: "淨利（含抽成/獎金）", isCurrency: true },
   { key: "purchasedCount", label: "進貨台數", isCurrency: false },
   { key: "soldCount", label: "售出台數", isCurrency: false },
   { key: "prepCost", label: "整備開銷", isCurrency: true },
@@ -57,8 +64,8 @@ export function OperationsTrendReport({
 }: {
   cars: CarTrendSlice[];
   repairItems: RepairItemTrendSlice[];
-  /** 淨利（含業務抽成）有隱私考量，理由跟其餘報表的 canViewCommission
-   * 完全一樣。 */
+  /** 淨利（含業務抽成／收購獎金）有隱私考量，理由跟其餘報表的
+   * canViewCommission 完全一樣。 */
   canViewCommission: boolean;
 }) {
   const [metric, setMetric] = useState<MetricKey>("revenue");
@@ -93,10 +100,11 @@ export function OperationsTrendReport({
         if (soldRow) {
           const totalCost = Number(car.closed_total_cost ?? 0);
           const commission = Number(car.closed_commission_cost ?? 0);
+          const acquisitionBonus = Number(car.closed_acquisition_bonus_cost ?? 0);
           const finalPrice = Number(car.final_price ?? 0);
           soldRow.soldCount += 1;
           soldRow.revenue += finalPrice;
-          soldRow.grossProfit += finalPrice - (totalCost - commission);
+          soldRow.grossProfit += finalPrice - (totalCost - commission - acquisitionBonus);
           soldRow.netProfit += finalPrice - totalCost;
         }
       }
@@ -116,7 +124,7 @@ export function OperationsTrendReport({
   const maxValue = Math.max(...rows.map((r) => Math.abs(r[metric])), 1);
 
   function handleExport() {
-    const header = ["月份", "進貨台數", "售出台數", "營收", "毛利（不含抽成）", ...(canViewCommission ? ["淨利（含抽成）"] : []), "整備開銷"];
+    const header = ["月份", "進貨台數", "售出台數", "營收", "毛利（不含抽成/獎金）", ...(canViewCommission ? ["淨利（含抽成/獎金）"] : []), "整備開銷"];
     const dataRows = rows.map((r) => [
       r.monthKey,
       r.purchasedCount,
