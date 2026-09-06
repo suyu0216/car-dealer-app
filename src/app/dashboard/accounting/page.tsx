@@ -94,6 +94,15 @@ type ManualTransaction = {
   /** 2026-09-04 新增：選填指定的金流帳戶（新版多帳戶架構），見
    * financial-ledger.ts 開頭的說明。 */
   account_id: string | null;
+  /** 2026-09-05 新增：作廢＋沖銷機制，取代直接刪除——見
+   * cash-pool-actions.ts 的 voidManualCashTransaction() 開頭說明，跟
+   * supabase/types.ts 的 Transaction 型別保持一致。這兩個欄位原本漏加在
+   * 這裡（這個檔案自己另外定義了一份精簡版的 ManualTransaction，沒有直接
+   * 用 supabase/types.ts 的 Transaction），導致 cash-pool-module.tsx／
+   * financial-ledger.ts 那邊要求的 Pick<Transaction, ...> 型別對不起來，
+   * build 會直接失敗（TS2322）。 */
+  voided_at: string | null;
+  reversed_transaction_id: string | null;
 };
 
 /** 2026-08-31 新增：「資金總覽」水池要用的請款撥款資料——只挑會計核准

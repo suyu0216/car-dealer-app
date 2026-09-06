@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { getEffectivePermissions } from "@/lib/permissions";
+import type { Role } from "@/lib/supabase/types";
 import { CarSettlementReport, type CarSettlementSlice } from "../_components/reports/car-settlement-report";
 import {
   SalesLeaderboardReport,
@@ -30,7 +31,10 @@ import {
 type ReportProfile = {
   id: string;
   tenant_id: string | null;
-  role: string;
+  /** 原本寫成 string，跟 permissions.ts 的 PermissionSource（role: Role）
+   * 對不起來，會讓 next build 的 TypeScript 檢查直接失敗（TS2345）——
+   * 這裡改用真正的 Role 聯合型別，跟 supabase/types.ts 一致。 */
+  role: Role;
   can_view_cost: boolean;
   can_view_salary: boolean;
   can_edit_cars: boolean;
