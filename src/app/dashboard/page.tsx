@@ -88,7 +88,11 @@ export default async function DashboardPage() {
     supabase
       .from("deals")
       .select(
-        "id, tenant_id, car_id, customer_id, customer_name, customer_phone, final_price, deposit_amount, balance_amount, deposit_payment_method, balance_payment_method, deposit_account_id, balance_account_id, loan_status, salesperson_id, commission_amount, status, note, created_at, delivered_at"
+        // 2026-09-06：補進新增的 acquisition_commission_amount（收購獎金）
+        // 欄位——跟上面 body_type／車輛七欄同一個教訓，沒補進這個白名單
+        // 的話，deal-form-modal.tsx 編輯合約時會永遠讀不到這個欄位目前
+        // 的值，畫面上看起來像是每次都沒填過。
+        "id, tenant_id, car_id, customer_id, customer_name, customer_phone, final_price, deposit_amount, balance_amount, deposit_payment_method, balance_payment_method, deposit_account_id, balance_account_id, loan_status, salesperson_id, commission_amount, acquisition_commission_amount, status, note, created_at, delivered_at"
       )
       .order("created_at", { ascending: false }),
     supabase

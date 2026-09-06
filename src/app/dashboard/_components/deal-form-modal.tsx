@@ -128,6 +128,10 @@ export function DealFormModal({
   const commissionInputRef = useRef<HTMLInputElement>(null);
 
   const selectedCar = useMemo(() => cars.find((c) => c.id === carId) ?? null, [cars, carId]);
+  // 2026-09-06 新增：「收購獎金」欄位要顯示這台車入庫時記錄的收購／採購人
+  // 姓名（cars.purchased_by 存的是 profile id，不是姓名），跟下面
+  // 「承辦業務」下拉選單共用同一份 staff 名單，不用另外查一次。
+  const staffNameById = useMemo(() => new Map(staff.map((s) => [s.id, s.name ?? "未命名"])), [staff]);
 
   // 「已交車」只有 canManageFinance（老闆/會計）能選——業務打開這個下拉
   // 選單只會看到「草約」「已簽約」，沒辦法自己把合約標記成已交車結案。
@@ -686,6 +690,42 @@ export function DealFormModal({
                   </>
                 )}
               </div>
+            </div>
+          )}
+
+          {/* 2026-09-06 新增：「收購獎金」——撥給把這台車收購／採購進來的
+              人（cars.purchased_by，入庫「新增車輛」時就填好，不是這裡的
+              欄位能改），跟上面「預估抽成」是兩筆不同的錢、給不同的人，
+              同一張合約可能同時有兩筆。跟預估抽成一樣只有會計/老闆
+              （canManageFinance）能填寫，一般業務打開合約表單完全看不到
+              這個欄位；deals-actions.ts 也會忽略任何非管理員帶上來的值，
+              雙重防呆。刻意不強制「已交車前必填」——不是每台車入庫時都
+              有指定收購人，也不是每次都要另外發獎金，會計/老闆覺得該發
+              才自己填。 */}
+          {canManageFinance && (
+            <div>
+              <label htmlFor="acquisition_commission_amount" className="block text-sm font-medium text-neutral-700">
+                收購獎金（撥給收購／採購人）
+              </label>
+              <input
+                id="acquisition_commission_amount"
+                name="acquisition_commission_amount"
+                type="number"
+                min={0}
+                step="any"
+                defaultValue={
+                  deal?.acquisition_commission_amount != null ? String(deal.acquisition_commission_amount) : ""
+                }
+                placeholder="選填，沒有要發獎金可以留空"
+                className={INPUT_CLASS}
+              />
+              <p className="mt-1 text-xs text-neutral-400">
+                {selectedCar
+                  ? selectedCar.purchased_by
+                    ? `這台車入庫時記錄的收購／採購人：${staffNameById.get(selectedCar.purchased_by) ?? "未知員工"}`
+                    : "這台車入庫時沒有記錄收購／採購人，如需另外指定請先到「車輛管理」補填。"
+                  : "請先選好車輛，這裡會顯示入庫時記錄的收購／採購人。"}
+              </p>
             </div>
           )}
 

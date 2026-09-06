@@ -1623,3 +1623,14 @@ create policy "identity_documents_super_admin_all"
   to authenticated
   using (bucket_id = 'identity-documents' and public.is_super_admin())
   with check (bucket_id = 'identity-documents' and public.is_super_admin());
+
+-- =============================================================================
+-- 2026-09-06（第二次）：合約「收購獎金」欄位——付給把這台車收購／採購進來
+-- 的人（cars.purchased_by，車輛入庫時就填好），跟原本付給承辦業務的
+-- commission_amount 是兩筆不同的錢、給不同的人。跟 commission_amount 一樣
+-- 只有會計/老闆（canManageFinance）能填寫/修改，見 deals-actions.ts／
+-- deal-form-modal.tsx 的說明。可為 null＝這張合約沒有另外發收購獎金。
+-- =============================================================================
+
+alter table public.deals
+  add column if not exists acquisition_commission_amount numeric;

@@ -56,6 +56,11 @@ type CashPoolCar = {
   final_price: number | null;
   selling_price: number | null;
   closed_total_cost: number | null;
+  /** 2026-09-06 新增：這台車入庫時記錄的收購／採購人——「薪資單」分頁
+   * 的「收購獎金」按這個欄位歸戶給哪個員工，見 payroll-module.tsx 的
+   * PayrollCar 型別說明。這裡跟 cashPoolCars 共用同一次查詢，「資金
+   * 總覽」分頁本身不會用到這個欄位，只是搭便車一起撈。 */
+  purchased_by: string | null;
 };
 
 type PayrollDeal = {
@@ -76,6 +81,9 @@ type PayrollDeal = {
   status: "draft" | "signed" | "delivered";
   salesperson_id: string | null;
   commission_amount: number | null;
+  /** 2026-09-06 新增：撥給收購／採購人的獎金，見 payroll-module.tsx 的
+   * PayrollDeal 型別說明。 */
+  acquisition_commission_amount: number | null;
   created_at: string;
   /** 2026-08-31 新增：合約第一次交車的時間戳記——「資金總覽」水池的
    * 尾款事件改用這個判斷起算點/顯示日期，不再誤用合約建立日
@@ -391,12 +399,12 @@ export default function AccountingPage() {
       supabase
         .from("cars")
         .select(
-          "id, brand, model_name, purchase_price, payment_method, purchase_account_id, created_at, closed_at, status, final_price, selling_price, closed_total_cost"
+          "id, brand, model_name, purchase_price, payment_method, purchase_account_id, created_at, closed_at, status, final_price, selling_price, closed_total_cost, purchased_by"
         ),
       supabase
         .from("deals")
         .select(
-          "id, car_id, customer_name, final_price, deposit_amount, balance_amount, deposit_payment_method, balance_payment_method, deposit_account_id, balance_account_id, status, salesperson_id, commission_amount, created_at, delivered_at"
+          "id, car_id, customer_name, final_price, deposit_amount, balance_amount, deposit_payment_method, balance_payment_method, deposit_account_id, balance_account_id, status, salesperson_id, commission_amount, acquisition_commission_amount, created_at, delivered_at"
         ),
       supabase.from("transactions").select("*").order("date", { ascending: false }),
       supabase.from("profiles").select("id, name").order("name"),

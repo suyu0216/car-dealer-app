@@ -490,6 +490,12 @@ export interface Deal {
   salesperson_id: string | null;
   /** 這筆合約要撥給 salesperson_id 的預估佣金；只有車行管理員能填寫/修改。 */
   commission_amount: number | null;
+  /** 2026-09-06 新增：這筆合約要撥給「收購這台車的人」（cars.purchased_by，
+   * 入庫時就填好）的獎金——跟上面 commission_amount 是兩筆不同的錢，一個
+   * 給承辦業務、一個給收購／採購人，同一張合約可能同時有兩筆。一樣只有
+   * 會計/老闆（canManageFinance）能填寫/修改，見 deals-actions.ts／
+   * deal-form-modal.tsx 的說明。NULL＝這張合約沒有另外發收購獎金。 */
+  acquisition_commission_amount: number | null;
   status: DealStatus;
   note: string | null;
   created_at: string;

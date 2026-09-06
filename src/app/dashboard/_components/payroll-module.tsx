@@ -27,10 +27,21 @@ type PayrollDeal = {
   status: "draft" | "signed" | "delivered";
   salesperson_id: string | null;
   commission_amount: number | null;
+  /** 2026-09-06 新增：撥給「收購這台車的人」（見下面 PayrollCar.purchased_by）
+   * 的獎金，跟 commission_amount 是兩筆不同的錢、算給不同的人。 */
+  acquisition_commission_amount: number | null;
   created_at: string;
 };
 
-type PayrollCar = { id: string; brand: string | null; model_name: string; closed_at: string | null };
+type PayrollCar = {
+  id: string;
+  brand: string | null;
+  model_name: string;
+  closed_at: string | null;
+  /** 2026-09-06 新增：這台車入庫時記錄的收購／採購人，「收購獎金」按這個
+   * 欄位歸戶給哪個員工，不是 salesperson_id。 */
+  purchased_by: string | null;
+};
 
 type PayrollExpense = {
   id: string;
@@ -93,10 +104,24 @@ export function PayrollModule({
   const commissionDeals = selectedId
     ? deals.filter((d) => d.salesperson_id === selectedId && d.status === "delivered" && dealMonthKey(d) === month)
     : [];
+  // 2026-09-06 新增：「收購獎金明細」——按 cars.purchased_by（入庫時記錄的
+  // 收購／採購人）歸戶，不是 salesperson_id，同一位員工可能同時是某些車的
+  // 業務、也是另一些車的收購人，兩份明細各算各的，互不影響。月份歸屬規則
+  // 跟抽成明細同一套（dealMonthKey：優先看車輛結帳封存日）。
+  const acquisitionDeals = selectedId
+    ? deals.filter(
+        (d) =>
+          carById.get(d.car_id)?.purchased_by === selectedId && d.status === "delivered" && dealMonthKey(d) === month
+      )
+    : [];
 
   const salaryTotal = salaryItems.reduce((sum, e) => sum + Number(e.amount), 0);
   const commissionTotal = commissionDeals.reduce((sum, d) => sum + Number(d.commission_amount ?? 0), 0);
-  const grandTotal = salaryTotal + commissionTotal;
+  const acquisitionTotal = acquisitionDeals.reduce(
+    (sum, d) => sum + Number(d.acquisition_commission_amount ?? 0),
+    0
+  );
+  const grandTotal = salaryTotal + commissionTotal + acquisitionTotal;
 
   // 2026-08-29 新增：「薪水成長趨勢」——安安希望業務三不五時打開網頁能
   // 看到自己的薪水有成長，原本這個分頁一次只看單一月份的數字，看不出
@@ -134,7 +159,25 @@ export function PayrollModule({
       (d) => d.salesperson_id === staffId && d.status === "delivered" && dealMonthKey(d) === monthKey
     );
     const commission = monthDeals.reduce((sum, d) => sum + Number(d.commission_amount ?? 0), 0);
-    return { salary, commission, total: salary + commission, carCount: monthDeals.length };
+    // 2026-09-06 新增：這位員工當月的收購獎金——按 cars.purchased_by 歸戶，
+    // 跟上面業務抽成（按 salesperson_id 歸戶）是分開算的兩筆錢，同一位
+    // 員工可能兩邊都有數字。
+    const acquisitionMonthDeals = deals.filter(
+      (d) =>
+        carById.get(d.car_id)?.purchased_by === staffId && d.status === "delivered" && dealMonthKey(d) === monthKey
+    );
+    const acquisitionBonus = acquisitionMonthDeals.reduce(
+      (sum, d) => sum + Number(d.acquisition_commission_amount ?? 0),
+      0
+    );
+    return {
+      salary,
+      commission,
+      acquisitionBonus,
+      total: salary + commission + acquisitionBonus,
+      carCount: monthDeals.length,
+      acquisitionCarCount: acquisitionMonthDeals.length,
+    };
   }
   function totalsForMonth(monthKey: string) {
     if (!selectedId) return { total: 0, carCount: 0 };
@@ -212,6 +255,9 @@ export function PayrollModule({
                 <th className="px-4 py-2 font-medium">員工</th>
                 <th className="px-4 py-2 text-right font-medium">底薪／獎金</th>
                 <th className="px-4 py-2 text-right font-medium">抽成</th>
+                {/* 2026-09-06 新增：收購獎金欄位，跟「抽成」並列——兩者是
+                    分開歸戶的不同款項（見上面 computeStaffMonth 的說明）。 */}
+                <th className="px-4 py-2 text-right font-medium">收購獎金</th>
                 <th className="px-4 py-2 text-right font-medium">本月成交</th>
                 <th className="px-4 py-2 text-right font-medium">應付總額</th>
               </tr>
@@ -219,7 +265,7 @@ export function PayrollModule({
             <tbody className="divide-y divide-neutral-100">
               {allStaffSummary.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-4 py-6 text-center text-neutral-400">
+                  <td colSpan={6} className="px-4 py-6 text-center text-neutral-400">
                     目前車行還沒有員工資料
                   </td>
                 </tr>
@@ -236,6 +282,7 @@ export function PayrollModule({
                   <td className="px-4 py-2 text-neutral-800">{s.name}</td>
                   <td className="px-4 py-2 text-right text-neutral-600">{formatCurrency(s.salary)}</td>
                   <td className="px-4 py-2 text-right text-neutral-600">{formatCurrency(s.commission)}</td>
+                  <td className="px-4 py-2 text-right text-neutral-600">{formatCurrency(s.acquisitionBonus)}</td>
                   <td className="px-4 py-2 text-right text-neutral-500">{s.carCount} 台</td>
                   <td className="px-4 py-2 text-right font-semibold text-[#A6793D]">{formatCurrency(s.total)}</td>
                 </tr>
@@ -260,13 +307,27 @@ export function PayrollModule({
             <p className="mt-1 text-3xl font-bold text-[#A6793D]">{formatCurrency(grandTotal)}</p>
             <p className="mt-1 text-xs text-neutral-400">
               底薪／獎金 {formatCurrency(salaryTotal)} ＋ 抽成 {formatCurrency(commissionTotal)}
+              {/* 2026-09-06 新增：收購獎金——只有這個月真的有收購獎金
+                  （acquisitionTotal > 0）才顯示這一段，避免大多數沒有收購
+                  獎金的員工畫面多一段永遠是 $0 的文字。 */}
+              {acquisitionTotal > 0 && <> ＋ 收購獎金 {formatCurrency(acquisitionTotal)}</>}
             </p>
             {/* 2026-08-31 新增：薪水是按月結算，安安要看這個月抽成是靠幾台
                 成交車湊出來的，不只是看錢的總額。台數就是下面「抽成明細
                 （已交車）」表格的列數，同一份 commissionDeals 陣列。 */}
-            <p className="mt-1 inline-flex items-center gap-1 rounded-full bg-[#FBF1E4] px-2.5 py-1 text-xs font-semibold text-[#A6793D]">
-              🚗 本月已成交 {commissionDeals.length} 台
-            </p>
+            <div className="mt-1 flex flex-wrap gap-2">
+              <span className="inline-flex items-center gap-1 rounded-full bg-[#FBF1E4] px-2.5 py-1 text-xs font-semibold text-[#A6793D]">
+                🚗 本月已成交 {commissionDeals.length} 台
+              </span>
+              {/* 2026-09-06 新增：收購獎金對應的台數，跟上面成交台數是
+                  不同的兩批車（一批是這個人賣掉的，一批是這個人收購進來
+                  又剛好在這個月結案的），同樣只在有資料時才顯示。 */}
+              {acquisitionDeals.length > 0 && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-[#EEF2ED] px-2.5 py-1 text-xs font-semibold text-[#5F7563]">
+                  🚙 本月收購獎金 {acquisitionDeals.length} 台
+                </span>
+              )}
+            </div>
             {growthPct !== null && (
               <p
                 className={
@@ -365,6 +426,42 @@ export function PayrollModule({
                 </tbody>
               </table>
             </div>
+          </div>
+
+          {/* 2026-09-06 新增：「收購獎金明細」——跟上面「抽成明細」是分開
+              的兩份清單（一個按承辦業務歸戶，一個按收購／採購人歸戶），
+              沒有收購獎金紀錄時不整個隱藏，一樣顯示「這個月沒有」的空白
+              提示，跟其他明細表格風格一致。 */}
+          <div className="overflow-x-auto rounded-2xl border border-neutral-200 bg-white shadow-sm">
+            <div className="border-b border-neutral-100 px-4 py-2.5 text-sm font-semibold text-neutral-700">
+              收購獎金明細（已交車）
+            </div>
+            <table className="w-full text-left text-sm">
+              <tbody className="divide-y divide-neutral-100">
+                {acquisitionDeals.length === 0 && (
+                  <tr>
+                    <td className="px-4 py-6 text-center text-neutral-400">這個月沒有收購獎金紀錄</td>
+                  </tr>
+                )}
+                {acquisitionDeals.map((d) => {
+                  const car = carById.get(d.car_id);
+                  return (
+                    <tr key={d.id} className="hover:bg-neutral-50">
+                      <td className="px-4 py-2 text-xs text-neutral-500">{formatDate(car?.closed_at ?? d.created_at)}</td>
+                      <td className="px-4 py-2 text-neutral-800">
+                        {car ? `${car.brand ? `${car.brand} ` : ""}${car.model_name}` : "（已刪除車輛）"}
+                        <span className="block text-xs font-normal text-neutral-400">{d.customer_name}</span>
+                      </td>
+                      <td className="px-4 py-2 text-right font-medium text-[#5F7563]">
+                        {d.acquisition_commission_amount != null
+                          ? formatCurrency(Number(d.acquisition_commission_amount))
+                          : "—"}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         </>
       )}

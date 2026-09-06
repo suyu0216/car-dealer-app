@@ -96,7 +96,20 @@ function parseDealForm(formData: FormData, canManageFinance: boolean) {
     loan_status: optionalText(formData, "loan_status"),
     salesperson_id: optionalText(formData, "salesperson_id"),
     ...(canManageFinance
-      ? { commission_amount: optionalMoney(formData, "commission_amount", "預估抽成") }
+      ? {
+          commission_amount: optionalMoney(formData, "commission_amount", "預估抽成"),
+          // 2026-09-06 新增：撥給「收購這台車的人」的獎金——跟上面的
+          // commission_amount 同一套權限保護，非 canManageFinance 的人
+          // 送出表單時這個 key 完全不會出現，UPDATE 不會覆蓋掉原本的值，
+          // INSERT 則用資料庫預設值（null）。跟 commission_amount 不同的
+          // 是這裡沒有「已交車前必填」的強制要求——收購獎金是選填，不是
+          // 每張合約都會有收購人、也不是每次都要發獎金。
+          acquisition_commission_amount: optionalMoney(
+            formData,
+            "acquisition_commission_amount",
+            "收購獎金"
+          ),
+        }
       : {}),
     status: status as DealStatus,
     note: optionalText(formData, "note"),
