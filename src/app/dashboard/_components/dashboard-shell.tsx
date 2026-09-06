@@ -184,6 +184,7 @@ export function DashboardShell({
             tenantName={tenantName}
             canViewAnalytics={permissions.canViewAnalytics}
             canViewCommission={permissions.canViewAllSalary || permissions.canManageFinance}
+            canViewFinalCost={permissions.canViewFinalCost}
             canEditCars={permissions.canEditCars}
             onNavigate={navigateToModule}
           />

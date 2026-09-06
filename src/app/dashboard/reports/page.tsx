@@ -50,7 +50,10 @@ type ReportDeal = SalesLeaderboardDealSlice;
 type ReportRepairItem = RepairItemPrepSlice & RepairItemTrendSlice;
 
 const TABS = [
-  { key: "carSettlement", label: "🚗 單台車結算" },
+  // 2026-09-06：安安把這份報表稱作「最終成本表」——業務抽成／收購獎金
+  // 都是會計填好之後，這份報表才是每台車真正的最終成本／淨利，標籤加註
+  // 讓她一眼認得出來這就是她說的那份表。
+  { key: "carSettlement", label: "🚗 單台車結算（最終成本表）" },
   { key: "salesLeaderboard", label: "🏆 業務報表" },
   { key: "tax", label: "🧾 稅金報表" },
   { key: "unsoldPrepCost", label: "🛠️ 未售車整備成本" },
@@ -65,6 +68,10 @@ export default function ReportsPage() {
   const [accessChecked, setAccessChecked] = useState(false);
   const [hasAccess, setHasAccess] = useState(false);
   const [canViewCommission, setCanViewCommission] = useState(false);
+  // 2026-09-06 新增：「單台車結算」＝安安說的「最終成本表」——里面新增
+  // 一欄「底價基準淨利」，比 canViewCommission 更嚴格，只有會計/老闆
+  // （canViewFinalCost）看得到，見 car-settlement-report.tsx 的說明。
+  const [canViewFinalCost, setCanViewFinalCost] = useState(false);
 
   const [cars, setCars] = useState<ReportCar[]>([]);
   const [deals, setDeals] = useState<ReportDeal[]>([]);
@@ -89,6 +96,7 @@ export default function ReportsPage() {
     const allowed = !!effective?.canManageFinance;
     setHasAccess(allowed);
     setCanViewCommission(!!effective?.canViewAllSalary || allowed);
+    setCanViewFinalCost(!!effective?.canViewFinalCost);
     setAccessChecked(true);
     if (!allowed) {
       setLoading(false);
@@ -102,7 +110,10 @@ export default function ReportsPage() {
           // 2026-09-06 補進 closed_acquisition_bonus_cost（收購獎金封存
           // 快照）——跟業務抽成一樣是真實成本，沒補進來的話單台車結算／
           // 營運報表的「淨利」會漏算這筆錢。
-          "id, brand, model_name, license_plate, purchase_price, closed_prep_cost, transfer_fee, tax_amount, closed_commission_cost, closed_acquisition_bonus_cost, closed_total_cost, final_price, closed_at, status, created_at"
+          // 2026-09-06（第二次）補進 floor_price——「單台車結算」（最終
+          // 成本表）新增「底價基準淨利」欄位要用，見 car-settlement-
+          // report.tsx 的說明。
+          "id, brand, model_name, license_plate, purchase_price, floor_price, closed_prep_cost, transfer_fee, tax_amount, closed_commission_cost, closed_acquisition_bonus_cost, closed_total_cost, final_price, closed_at, status, created_at"
         ),
       supabase
         .from("deals")
@@ -158,7 +169,9 @@ export default function ReportsPage() {
         ))}
       </div>
 
-      {activeTab === "carSettlement" && <CarSettlementReport cars={cars} canViewCommission={canViewCommission} />}
+      {activeTab === "carSettlement" && (
+        <CarSettlementReport cars={cars} canViewCommission={canViewCommission} canViewFinalCost={canViewFinalCost} />
+      )}
       {activeTab === "salesLeaderboard" && (
         <SalesLeaderboardReport deals={deals} staff={staff} canViewCommission={canViewCommission} />
       )}
