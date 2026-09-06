@@ -695,20 +695,6 @@ export default function AccountingPage() {
             🧮 淨利／分潤試算
           </button>
         )}
-        {/* 2026-09-04 新增：帳戶管理，「金流架構方案一」第一步，見
-            financial-accounts-module.tsx 開頭的說明。 */}
-        {hasFinanceAccess && (
-          <button
-            onClick={() => setActiveTab("accounts")}
-            className={`px-5 py-3 font-semibold text-sm transition border-b-2 ${
-              activeTab === "accounts"
-                ? "border-blue-600 text-blue-600"
-                : "border-transparent text-neutral-500 hover:text-neutral-700"
-            }`}
-          >
-            🏦 帳戶管理
-          </button>
-        )}
         {/* 2026-09-05 新增：每日對帳報表，見
             daily-reconciliation-module.tsx 開頭的說明。 */}
         {hasFinanceAccess && (
@@ -741,6 +727,23 @@ export default function AccountingPage() {
             }`}
           >
             🚗 公積金（進貨／預訂訂金）
+          </button>
+        )}
+        {/* 2026-09-06：安安要求「帳戶管理」排到最後面，其他分頁比較重要、
+            比較常用——2026-09-04 剛推出這個分頁時暫時放在前面，現在移到
+            分頁列表最後一個，只是按鈕順序調整，不影響 activeTab 的邏輯
+            或預設分頁（見上面 initialTab 的說明，帳戶管理本來就不是預設
+            分頁）。 */}
+        {hasFinanceAccess && (
+          <button
+            onClick={() => setActiveTab("accounts")}
+            className={`px-5 py-3 font-semibold text-sm transition border-b-2 ${
+              activeTab === "accounts"
+                ? "border-blue-600 text-blue-600"
+                : "border-transparent text-neutral-500 hover:text-neutral-700"
+            }`}
+          >
+            🏦 帳戶管理
           </button>
         )}
       </div>
