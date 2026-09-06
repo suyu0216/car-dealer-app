@@ -6,9 +6,13 @@ import { formatCurrency } from "@/lib/format";
 import { DealFormModal } from "./deal-form-modal";
 import { DealContractPreview } from "./deal-contract-preview";
 
+// 2026-09-06：安安反映「已簽約」這個詞跟實務上「收訂金」的流程對不
+// 起來，改叫「已收訂」——只是顯示用的標籤文字改名，底下資料庫存的狀態
+// 值還是原本的 "signed"，不用跑遷移，也不影響任何篩選/計算邏輯（那些
+// 都是比對 "signed" 這個值，不是比對顯示字串）。
 const STATUS_LABEL: Record<DealStatus, string> = {
   draft: "草約",
-  signed: "已簽約",
+  signed: "已收訂",
   delivered: "已交車",
 };
 

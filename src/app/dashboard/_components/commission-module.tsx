@@ -34,13 +34,24 @@ export function CommissionModule({
   const carById = new Map(cars.map((c) => [c.id, c]));
   const staffNameById = new Map(staff.map((s) => [s.id, s.name ?? "未命名"]));
 
+  // 2026-09-06 修正：安安反映這裡的「建立日期」要以「已成交」為準，跟
+  // 「薪資單」（payroll-module.tsx）的 dealMonthKey 用同一套邏輯——優先
+  // 讀車輛的結帳封存日 closed_at（車輛真正過戶／結案的日子），還沒結帳
+  // 的車輛（合約剛收訂、還沒交車結案）才退回用合約建立日 created_at。
+  // 原本這裡整欄都直接讀 deal.created_at，會讓「這筆抽成算哪個月」跟
+  // 薪資單對不起來。
+  function dealSettleDate(deal: Deal): string {
+    const closedAt = carById.get(deal.car_id)?.closed_at;
+    return closedAt ?? deal.created_at;
+  }
+
   // 一般業務只看得到自己承辦的合約；管理員看全部——這是「只能看到自己的
   // 成交車輛、自己的預估抽成與薪資明細」這個規則的具體實作，資料在伺服器
   // 端 filter 完才會出現在畫面上（不是前端遮罩，其他業務的合約根本不會
   // render 出來）。
   const visibleDeals = (canManageStaff ? deals : deals.filter((d) => d.salesperson_id === currentUserId))
     .filter((d) => d.status === "signed" || d.status === "delivered")
-    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    .sort((a, b) => new Date(dealSettleDate(b)).getTime() - new Date(dealSettleDate(a)).getTime());
 
   const totalCommission = visibleDeals.reduce(
     (sum, d) => sum + Number(d.commission_amount ?? 0),
@@ -56,7 +67,7 @@ export function CommissionModule({
           </h2>
           <p className="mt-0.5 text-xs text-neutral-400">
             {canManageStaff
-              ? "列出所有已簽約／已交車的合約與各業務的預估抽成"
+              ? "列出所有已收訂／已交車的合約與各業務的預估抽成"
               : "只會顯示你自己承辦的成交車輛，其他業務的資料不會出現在這裡"}
           </p>
         </div>
@@ -73,7 +84,7 @@ export function CommissionModule({
               <th className="px-4 py-2 font-medium">成交車輛</th>
               <th className="px-4 py-2 font-medium">成交價</th>
               <th className="px-4 py-2 font-medium">預估抽成</th>
-              <th className="px-4 py-2 font-medium">建立日期</th>
+              <th className="px-4 py-2 font-medium">建立日期（已成交以結帳日為準）</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-neutral-100">
@@ -103,7 +114,7 @@ export function CommissionModule({
                     {deal.commission_amount != null ? formatCurrency(deal.commission_amount) : "—"}
                   </td>
                   <td className="px-4 py-2 text-neutral-500">
-                    {formatDate(deal.created_at)}
+                    {formatDate(dealSettleDate(deal))}
                   </td>
                 </tr>
               );

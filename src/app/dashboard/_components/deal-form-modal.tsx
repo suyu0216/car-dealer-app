@@ -7,9 +7,12 @@ import { CASH_POOL_METHOD_OPTIONS } from "@/lib/cash-pool";
 import { formatCurrency } from "@/lib/format";
 import type { Car, Customer, Deal, DealStatus, FinancialAccount, RepairItem } from "@/lib/supabase/types";
 
+// 2026-09-06：「已簽約」改名顯示成「已收訂」（跟 deals-module.tsx 的
+// STATUS_LABEL 同步）——純粹是顯示文字改名，DealStatus 的值仍然是
+// "signed"，不影響任何既有邏輯／資料。
 const STATUS_OPTIONS: { value: DealStatus; label: string }[] = [
   { value: "draft", label: "草約" },
-  { value: "signed", label: "已簽約" },
+  { value: "signed", label: "已收訂" },
   { value: "delivered", label: "已交車" },
 ];
 
@@ -740,7 +743,7 @@ export function DealFormModal({
             </select>
             {!canManageFinance && (
               <p className="mt-1 text-xs text-neutral-400">
-                「已交車」要交給會計/老闆確認稅金與業務抽成後才能標記，這裡最多只能填到「已簽約」。
+                「已交車」要交給會計/老闆確認稅金與業務抽成後才能標記，這裡最多只能填到「已收訂」。
               </p>
             )}
           </div>

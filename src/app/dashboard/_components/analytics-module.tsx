@@ -100,7 +100,7 @@ export function AnalyticsModule({
       ? Math.round(turnoverDays.reduce((a, b) => a + b, 0) / turnoverDays.length)
       : null;
 
-  // 業務銷售排行榜：本月已簽約/已交車的合約，依承辦業務加總。
+  // 業務銷售排行榜：本月已收訂/已交車的合約，依承辦業務加總。
   const completedDealsThisMonth = deals.filter(
     (d) => (d.status === "signed" || d.status === "delivered") && isThisMonth(d.created_at, now)
   );
@@ -191,7 +191,7 @@ export function AnalyticsModule({
             業務銷售排行榜（本月）
           </h4>
           {leaderboard.length === 0 ? (
-            <p className="mt-3 text-sm text-neutral-400">本月尚無已簽約/已交車的合約</p>
+            <p className="mt-3 text-sm text-neutral-400">本月尚無已收訂/已交車的合約</p>
           ) : (
             <ol className="mt-3 space-y-2">
               {leaderboard.map((entry, i) => (
