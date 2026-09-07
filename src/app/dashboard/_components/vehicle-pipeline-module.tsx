@@ -1,11 +1,17 @@
 "use client";
 
-// 「公積金」——安安自己的說法，指「還沒真的入庫/交車、但已經知道會有」的
-// 訂金收支：進貨（車還沒回來，可能已經先付一筆訂金給賣家/車商，車回來
-// 還要付尾款）、客戶預訂（客戶預訂一台還沒到貨的車，可能已經先收一筆
-// 訂金，交車時還要收尾款）。見 vehicle-pipeline-actions.ts 開頭的完整
-// 說明。2026-09-05 追加：這裡原本叫「調車中」，安安反映錢要付出去買車
-// 叫「進貨」，這裡跟畫面上的文字都已經統一改成「進貨」。
+// 「預收/預支」（原本安安自己叫「公積金」，2026-09-07 改名）——指「還沒
+// 真的入庫/交車、但已經知道會有」的訂金收支：進貨＝預支（車還沒回來，
+// 可能已經先付一筆訂金給賣家/車商，車回來還要付尾款）、客戶預訂＝預收
+// （客戶預訂一台還沒到貨的車，可能已經先收一筆訂金，交車時還要收尾款）。
+// 見 vehicle-pipeline-actions.ts 開頭的完整說明。2026-09-05 追加：這裡
+// 原本叫「調車中」，安安反映錢要付出去買車叫「進貨」，這裡跟畫面上的
+// 文字都已經統一改成「進貨」。2026-09-07 再追加：安安要求把整體名稱從
+// 「公積金」改成更直覺的「預收/預支」——錢要付出去（進貨）＝預支，
+// 錢已經收進來（客戶預訂）＝預收，兩個方向本來就分得很清楚，直接對應
+// 這兩個會計用語，畫面上的文字、按鈕、錯誤訊息都一起改掉；資料庫欄位
+// 名稱（direction: "purchase" | "preorder"）跟表格名稱不動，純粹是
+// 顯示文字的改名，不影響任何既有資料或邏輯。
 //
 // 2026-09-05 再追加：安安希望這個分頁跟「資金總覽」的水池視覺一樣，一眼
 // 看得很清楚，所以把原本 4 張純數字的 StatCard 換成跟 cash-pool-module.tsx
@@ -193,8 +199,8 @@ export function VehiclePipelineModule({
           ℹ️
         </span>
         <p>
-          「公積金」是給還沒真的入庫/交車、但已經知道會有的訂金收支用的規劃清單：<strong>進貨</strong>
-          ——車還沒回來，可能已經先付一筆訂金給賣家；<strong>客戶預訂</strong>——客戶預訂一台還沒到貨的車，可能已經先收一筆訂金。這裡刻意不跟正式的車輛/合約資料綁在一起，車真的到貨/交車了，還是要用「新增車輛」／「買賣合約」正式建檔，這裡只要標記「已完成」即可。訂金填進來只是先記錄，不會馬上影響資金總覽——要等妳按「確認入帳」，系統才會真的補一筆收支紀錄進去。
+          「預收/預支」是給還沒真的入庫/交車、但已經知道會有的訂金收支用的規劃清單：<strong>進貨（預支）</strong>
+          ——車還沒回來，可能已經先付一筆訂金給賣家；<strong>客戶預訂（預收）</strong>——客戶預訂一台還沒到貨的車，可能已經先收一筆訂金。這裡刻意不跟正式的車輛/合約資料綁在一起，車真的到貨/交車了，還是要用「新增車輛」／「買賣合約」正式建檔，這裡只要標記「已完成」即可。訂金填進來只是先記錄，不會馬上影響資金總覽——要等妳按「確認入帳」，系統才會真的補一筆收支紀錄進去。
         </p>
       </div>
 
@@ -203,7 +209,7 @@ export function VehiclePipelineModule({
           多，不用細看數字。 */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <PipelinePoolCard
-          label="進貨（要付出去的錢）"
+          label="進貨・預支（要付出去的錢）"
           icon="📦"
           amount={upcomingOutflow}
           caption={`待付訂金 ${formatCurrency(purchasePendingDeposit)} ・待付尾款 ${formatCurrency(
@@ -213,7 +219,7 @@ export function VehiclePipelineModule({
           tone="outflow"
         />
         <PipelinePoolCard
-          label="客戶預訂（已收進來的錢）"
+          label="客戶預訂・預收（已收進來的錢）"
           icon="🧾"
           amount={alreadyCollected}
           caption={`預計還要收 ${formatCurrency(upcomingInflow)} ・進行中 ${activePreorderCount} 筆`}
@@ -225,7 +231,7 @@ export function VehiclePipelineModule({
       {canRecord && <NewEntryForm onCreated={onDataChanged} />}
 
       <PipelineSection
-        title="📦 進貨（訂金支出）"
+        title="📦 進貨・預支（訂金支出）"
         emptyText="目前沒有進貨中的紀錄"
         entries={purchaseEntries}
         financialAccounts={financialAccounts}
@@ -234,7 +240,7 @@ export function VehiclePipelineModule({
         onDataChanged={onDataChanged}
       />
       <PipelineSection
-        title="🧾 客戶預訂（訂金收入）"
+        title="🧾 客戶預訂・預收（訂金收入）"
         emptyText="目前沒有客戶預訂的紀錄"
         entries={preorderEntries}
         financialAccounts={financialAccounts}
@@ -292,7 +298,7 @@ function NewEntryForm({ onCreated }: { onCreated: () => void }) {
 
   return (
     <div className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
-      <h2 className="mb-4 border-b pb-3 text-base font-semibold text-neutral-800">➕ 新增公積金紀錄</h2>
+      <h2 className="mb-4 border-b pb-3 text-base font-semibold text-neutral-800">➕ 新增預收/預支紀錄</h2>
       <form onSubmit={handleSubmit} className="space-y-4">
         <div className="flex gap-2">
           <button
@@ -303,7 +309,7 @@ function NewEntryForm({ onCreated }: { onCreated: () => void }) {
               (isPurchase ? "border-[#BFA074] bg-[#FBF1E4] text-[#A6793D]" : "border-neutral-200 text-neutral-500")
             }
           >
-            📦 進貨（要付出去）
+            📦 進貨・預支（要付出去）
           </button>
           <button
             type="button"
@@ -313,7 +319,7 @@ function NewEntryForm({ onCreated }: { onCreated: () => void }) {
               (!isPurchase ? "border-[#BFA074] bg-[#FBF1E4] text-[#A6793D]" : "border-neutral-200 text-neutral-500")
             }
           >
-            🧾 客戶預訂（要收進來）
+            🧾 客戶預訂・預收（要收進來）
           </button>
         </div>
 

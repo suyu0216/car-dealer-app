@@ -1,7 +1,8 @@
 "use server";
 
-// 「公積金」——安安自己的說法，指「還沒真的入庫/交車、但已經知道會有」的
-// 訂金收支：進貨（錢即將付給賣家/車商）、客戶預訂（錢即將跟客戶收）。
+// 「預收/預支」（原本安安自己叫「公積金」，2026-09-07 改名）——指「還沒
+// 真的入庫/交車、但已經知道會有」的訂金收支：進貨＝預支（錢即將付給
+// 賣家/車商）、客戶預訂＝預收（錢即將跟客戶收）。
 // 2026-09-05 追加：這裡原本叫「調車中」，安安反映錢要付出去買車叫
 // 「進貨」，UI 跟這個檔案的文案都改成「進貨」，direction 的值本身仍是
 // 英文 "purchase"，資料庫/型別不受影響。
@@ -46,15 +47,15 @@ function canRecord(profile: Parameters<typeof getEffectivePermissions>[0]) {
   return p.canEditCars || p.canManageFinance;
 }
 
-/** 新增一筆「公積金」紀錄——進貨或客戶預訂，都只是先記錄，不影響任何
- * 真正的財務數字。 */
+/** 新增一筆「預收/預支」紀錄——進貨（預支）或客戶預訂（預收），都只是
+ * 先記錄，不影響任何真正的財務數字。 */
 export async function createVehiclePipelineEntry(
   _prevState: VehiclePipelineFormState | undefined,
   formData: FormData
 ): Promise<VehiclePipelineFormState> {
   const { profile } = await requireTenantUser();
   if (!canRecord(profile)) {
-    return { error: "沒有權限新增公積金紀錄，請聯繫車行管理員開啟「編輯車輛」或「管理財務」權限。" };
+    return { error: "沒有權限新增預收/預支紀錄，請聯繫車行管理員開啟「編輯車輛」或「管理財務」權限。" };
   }
 
   const direction = String(formData.get("direction") ?? "").trim();
@@ -103,7 +104,7 @@ export async function createVehiclePipelineEntry(
   return { success: true };
 }
 
-/** 編輯一筆還沒確認入帳的公積金紀錄（車型說明／對方資訊／金額／預計
+/** 編輯一筆還沒確認入帳的預收/預支紀錄（車型說明／對方資訊／金額／預計
  * 日期／備註）。已經確認入帳、已完成或已取消的紀錄不能再改金額，避免
  * 跟已經真的入帳的那筆手動記帳對不起來——要調整的話，先去帳戶管理／
  * 資金總覽把那筆手動記帳作廢，這裡的狀態才有辦法改回「尚未確認」
@@ -114,7 +115,7 @@ export async function updateVehiclePipelineEntry(
 ): Promise<VehiclePipelineFormState> {
   const { profile } = await requireTenantUser();
   if (!canRecord(profile)) {
-    return { error: "沒有權限修改公積金紀錄，請聯繫車行管理員開啟「編輯車輛」或「管理財務」權限。" };
+    return { error: "沒有權限修改預收/預支紀錄，請聯繫車行管理員開啟「編輯車輛」或「管理財務」權限。" };
   }
 
   const entryId = String(formData.get("entry_id") ?? "").trim();
@@ -173,11 +174,11 @@ export async function updateVehiclePipelineEntry(
 }
 
 /**
- * 確認一筆公積金訂金「真的入帳了」——這是唯一一個會真正動到財務數字的
+ * 確認一筆預收/預支訂金「真的入帳了」——這是唯一一個會真正動到財務數字的
  * 動作：在 transactions 表建立一筆手動記帳（purchase 方向是支出、
  * preorder 方向是收入），金額/日期/付款方式/帳戶都由這裡的表單決定
  * （預設帶入這筆紀錄原本填的訂金金額，但允許微調——例如實際付出去的
- * 金額跟當初預計的差一點）。建立成功後，把這筆公積金紀錄的狀態改成
+ * 金額跟當初預計的差一點）。建立成功後，把這筆預收/預支紀錄的狀態改成
  * deposit_paid、記下真正入帳日期跟連到哪一筆 transactions，資金總覽／
  * 帳戶管理的收支明細就會同步看到這筆錢。
  *
@@ -201,7 +202,7 @@ export async function confirmVehiclePipelineDeposit(
   const amountRaw = String(formData.get("amount") ?? "").trim();
   const accountId = optionalText(formData, "account_id");
 
-  if (!entryId) return { error: "找不到這筆公積金紀錄。" };
+  if (!entryId) return { error: "找不到這筆預收/預支紀錄。" };
   if (!VALID_METHODS.includes(paymentMethod as CashPoolMethod)) {
     return { error: "請選擇正確的現金／銀行歸類。" };
   }
@@ -218,7 +219,7 @@ export async function confirmVehiclePipelineDeposit(
     .eq("id", entryId)
     .eq("tenant_id", profile.tenant_id!)
     .maybeSingle();
-  if (!entry) return { error: "找不到這筆公積金紀錄。" };
+  if (!entry) return { error: "找不到這筆預收/預支紀錄。" };
   if (entry.status !== "pending") {
     return { error: "這筆紀錄已經確認過入帳，不能重複確認。" };
   }
@@ -271,10 +272,10 @@ export async function confirmVehiclePipelineDeposit(
     .eq("id", entryId);
 
   if (updateError) {
-    // 手動記帳已經寫進去了，只是這筆公積金紀錄的狀態更新失敗——不回頭
-    // 刪掉剛剛那筆真正的收支紀錄（那才是真的錢，比公積金清單本身的狀態
+    // 手動記帳已經寫進去了，只是這筆預收/預支紀錄的狀態更新失敗——不回頭
+    // 刪掉剛剛那筆真正的收支紀錄（那才是真的錢，比預收/預支清單本身的狀態
     // 更重要），只回報錯誤，請使用者重新整理頁面確認狀態。
-    return { error: `已經記到收支明細了，但更新公積金狀態失敗：${updateError.message}，請重新整理頁面確認。` };
+    return { error: `已經記到收支明細了，但更新預收/預支狀態失敗：${updateError.message}，請重新整理頁面確認。` };
   }
 
   revalidatePath("/dashboard/accounting");
@@ -287,7 +288,7 @@ export async function confirmVehiclePipelineDeposit(
 export async function markVehiclePipelineFulfilled(entryId: string): Promise<VehiclePipelineFormState> {
   const { profile } = await requireTenantUser();
   if (!canRecord(profile)) {
-    return { error: "沒有權限修改公積金紀錄，請聯繫車行管理員開啟「編輯車輛」或「管理財務」權限。" };
+    return { error: "沒有權限修改預收/預支紀錄，請聯繫車行管理員開啟「編輯車輛」或「管理財務」權限。" };
   }
   const supabase = await createClient();
   const { error } = await supabase
@@ -307,7 +308,7 @@ export async function markVehiclePipelineFulfilled(entryId: string): Promise<Veh
 export async function markVehiclePipelineCancelled(entryId: string): Promise<VehiclePipelineFormState> {
   const { profile } = await requireTenantUser();
   if (!canRecord(profile)) {
-    return { error: "沒有權限修改公積金紀錄，請聯繫車行管理員開啟「編輯車輛」或「管理財務」權限。" };
+    return { error: "沒有權限修改預收/預支紀錄，請聯繫車行管理員開啟「編輯車輛」或「管理財務」權限。" };
   }
   const supabase = await createClient();
   const { error } = await supabase
@@ -320,13 +321,13 @@ export async function markVehiclePipelineCancelled(entryId: string): Promise<Veh
   return { success: true };
 }
 
-/** 刪除一筆公積金紀錄——只允許還沒確認過入帳的（status === 'pending'）
+/** 刪除一筆預收/預支紀錄——只允許還沒確認過入帳的（status === 'pending'）
  * 紀錄刪除，避免刪掉之後找不到對應的真正收支紀錄是哪一筆。已經確認/
  * 完成/取消的紀錄只能留著當歷史紀錄，不能刪。 */
 export async function deleteVehiclePipelineEntry(entryId: string): Promise<VehiclePipelineFormState> {
   const { profile } = await requireTenantUser();
   if (!canRecord(profile)) {
-    return { error: "沒有權限刪除公積金紀錄，請聯繫車行管理員開啟「編輯車輛」或「管理財務」權限。" };
+    return { error: "沒有權限刪除預收/預支紀錄，請聯繫車行管理員開啟「編輯車輛」或「管理財務」權限。" };
   }
   const supabase = await createClient();
   const { data: existing } = await supabase

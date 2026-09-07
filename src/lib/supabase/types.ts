@@ -367,7 +367,8 @@ export interface AccountReconciliation {
   created_at: string;
 }
 
-/** 2026-09-05 新增：「公積金」——進貨／客戶預訂的訂金收支追蹤清單，
+/** 2026-09-05 新增（2026-09-07 由「公積金」改名為「預收/預支」）：
+ * 進貨（預支）／客戶預訂（預收）的訂金收支追蹤清單，
  * 見 supabase_schema.sql 裡 vehicle_pipeline_entries 表的說明。刻意跟
  * cars/deals 兩張表不綁定，車還沒回來時資料本來就不齊全，純粹是安安
  * 自己要看的「規劃／備忘」清單，不是正式車籍或合約紀錄。2026-09-05

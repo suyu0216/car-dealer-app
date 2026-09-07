@@ -25,10 +25,11 @@ import { DailyReconciliationModule } from "../_components/daily-reconciliation-m
 // 起改成把原始五個來源直接傳給 FinancialAccountsModule，讓它自己視日期
 // 篩選內部呼叫 computeFinancialLedger()（一次全歷史算「目前餘額」、一次
 // 帶 dateRange 算篩選後的收支明細），這裡不用再自己呼叫一次。
-// 2026-09-05 新增：「公積金」——進貨訂金（未來要付出去的錢）／客戶
-// 預訂訂金（未來會收進來的錢），見 vehicle-pipeline-module.tsx 開頭的
-// 說明。這是一張全新的獨立表 vehicle_pipeline_entries，刻意不碰
-// cars/deals，車真的回來了還是走既有「新增車輛」流程手動建檔。
+// 2026-09-05 新增（2026-09-07 由「公積金」改名為「預收/預支」）：
+// 進貨訂金＝預支（未來要付出去的錢）／客戶預訂訂金＝預收（未來會收
+// 進來的錢），見 vehicle-pipeline-module.tsx 開頭的說明。這是一張全新的
+// 獨立表 vehicle_pipeline_entries，刻意不碰 cars/deals，車真的回來了
+// 還是走既有「新增車輛」流程手動建檔。
 import { VehiclePipelineModule } from "../_components/vehicle-pipeline-module";
 import type { VehiclePipelineEntry } from "@/lib/supabase/types";
 
@@ -734,7 +735,7 @@ export default function AccountingPage() {
                 : "border-transparent text-neutral-500 hover:text-neutral-700"
             }`}
           >
-            🚗 公積金（進貨／預訂訂金）
+            🚗 預收/預支（進貨／客戶預訂訂金）
           </button>
         )}
         {/* 2026-09-06：安安要求「帳戶管理」排到最後面，其他分頁比較重要、
