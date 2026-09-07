@@ -95,6 +95,13 @@ function parseDealForm(formData: FormData, canManageFinance: boolean) {
     balance_account_id: balanceAccountId,
     loan_status: optionalText(formData, "loan_status"),
     salesperson_id: optionalText(formData, "salesperson_id"),
+    // 2026-09-07 新增：買方統一編號／身分證字號，給「發票」功能記錄用
+    // ——不是財務審核欄位（不影響金流／抽成），任何能編輯合約的角色都
+    // 能填，不用像 commission_amount 限定 canManageFinance。這兩欄也可以
+    // 直接在「發票」畫面用 updateDealBuyerInfo() 單獨編輯，不用整張合約
+    // 表單都重新送一次。
+    buyer_tax_id: optionalText(formData, "buyer_tax_id"),
+    buyer_id_number: optionalText(formData, "buyer_id_number"),
     ...(canManageFinance
       ? {
           commission_amount: optionalMoney(formData, "commission_amount", "預估抽成"),
@@ -363,6 +370,51 @@ export async function updateDeal(
   // 已經是已交車、這次編輯只是訂正成交金額，也會把訂正後的價格重新
   // 同步到車輛的最終成交價（見 syncCarStatusFromDeal 說明）。
   await syncCarStatusFromDeal(values.car_id, values.status, values.final_price);
+
+  revalidatePath("/dashboard");
+  return { success: true };
+}
+
+/**
+ * 2026-09-07 新增：「發票」畫面（invoice-module.tsx）直接編輯買方資訊用
+ * 的輕量級動作——只改客戶姓名／電話／統一編號／身分證字號這四個欄位，
+ * 不像 updateDeal() 要求整張合約表單資料（成交價/合約狀態…全部必填），
+ * 不然沒辦法從一個只有幾個欄位的小表單送出，也不會誤動到合約本身的
+ * 金額/狀態。
+ *
+ * 權限刻意用 canViewCost（跟「發票」畫面本身的可見權限一致），不是
+ * updateDeal() 用的 canManageFinance——這四個欄位是開發票用的聯絡/身分
+ * 資訊，不影響金流／抽成，跟 updateCarSellerInfo() 同一個放寬理由。
+ */
+export async function updateDealBuyerInfo(
+  dealId: string,
+  formData: FormData
+): Promise<DealFormState> {
+  const { profile } = await requireTenantUser();
+  if (!getEffectivePermissions(profile).canViewCost) {
+    return { error: "沒有權限修改買方資訊，請聯繫車行管理員開啟「檢視成本」權限。" };
+  }
+
+  const customerName = String(formData.get("customer_name") ?? "").trim();
+  if (!customerName) {
+    return { error: "請輸入買方姓名。" };
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("deals")
+    .update({
+      customer_name: customerName,
+      customer_phone: optionalText(formData, "customer_phone"),
+      buyer_tax_id: optionalText(formData, "buyer_tax_id"),
+      buyer_id_number: optionalText(formData, "buyer_id_number"),
+    })
+    .eq("id", dealId)
+    .eq("tenant_id", profile.tenant_id!);
+
+  if (error) {
+    return { error: `修改買方資訊失敗：${error.message}` };
+  }
 
   revalidatePath("/dashboard");
   return { success: true };

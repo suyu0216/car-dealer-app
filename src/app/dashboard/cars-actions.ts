@@ -362,6 +362,10 @@ function parseCarForm(formData: FormData): ParsedCar {
     source_ledger_type: optionalEnum(formData, "source_ledger_type", VALID_SOURCE_LEDGER_TYPES, "來源帳務分類"),
     seller_name: optionalText(formData, "seller_name"),
     seller_id_number: optionalText(formData, "seller_id_number"),
+    // 2026-09-07 新增：賣家統一編號／電話，對稱 deals.buyer_tax_id／
+    // customer_phone，見 types.ts 對這兩欄的說明。
+    seller_tax_id: optionalText(formData, "seller_tax_id"),
+    seller_phone: optionalText(formData, "seller_phone"),
     seller_address: optionalText(formData, "seller_address"),
     seller_birthdate: optionalText(formData, "seller_birthdate"),
     certification: optionalText(formData, "certification"),
@@ -1100,6 +1104,49 @@ export async function deleteCarSellerIdPhoto(photoId: string) {
 
   if (photo?.path) {
     await supabase.storage.from("identity-documents").remove([photo.path]);
+  }
+
+  revalidatePath("/dashboard");
+  return { success: true };
+}
+
+/**
+ * 2026-09-07 新增：「發票」畫面（invoice-module.tsx）直接編輯賣家姓名／
+ * 身分證字號／統一編號用的輕量級動作——只改這三個欄位，不像 updateCar()
+ * 要求整份車輛表單資料（品牌/型號/收購進價…全部必填），不然沒辦法從
+ * 一個只有幾個欄位的小表單送出。
+ *
+ * 權限刻意用 canViewCost（跟「發票」畫面本身的可見權限一致），不是
+ * updateCar() 用的 canEditCars——安安反映實際填這幾個欄位、開發票的常常
+ * 是會計（預設 canViewCost=true、canEditCars=false），不是店長/業務，
+ * 這裡是深思熟慮後刻意放寬的例外，不是疏漏；車輛的其他欄位（收購進價、
+ * 底價等）完全不受影響，仍然只有 canEditCars 能改。
+ */
+export async function updateCarSellerInfo(
+  carId: string,
+  formData: FormData
+): Promise<{ error?: string; success?: boolean }> {
+  const { profile } = await requireTenantUser();
+  if (!getEffectivePermissions(profile).canViewCost) {
+    return { error: "沒有權限修改賣家資訊，請聯繫車行管理員開啟「檢視成本」權限。" };
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("cars")
+    .update({
+      seller_name: optionalText(formData, "seller_name"),
+      seller_id_number: optionalText(formData, "seller_id_number"),
+      // 2026-09-07 新增：賣家統一編號／電話，統一編號跟身分證字號並存
+      // 互斥，對稱 updateDealBuyerInfo() 的 buyer_tax_id／customer_phone。
+      seller_tax_id: optionalText(formData, "seller_tax_id"),
+      seller_phone: optionalText(formData, "seller_phone"),
+    })
+    .eq("id", carId)
+    .eq("tenant_id", profile.tenant_id!);
+
+  if (error) {
+    return { error: `修改賣家資訊失敗：${error.message}` };
   }
 
   revalidatePath("/dashboard");

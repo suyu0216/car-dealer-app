@@ -765,6 +765,17 @@ export function CarFormModal({
                   type="date"
                   defaultValue={car?.seller_birthdate ?? ""}
                 />
+                {/* 2026-09-07 新增：賣家統一編號——跟公司行號收購車輛時
+                    才會填，通常跟上面身分證字號不會兩個都填，對稱
+                    deal-form-modal.tsx 的「買方統一編號」欄位。 */}
+                <Field
+                  label="賣家統一編號（公司行號收購時填）"
+                  name="seller_tax_id"
+                  defaultValue={car?.seller_tax_id ?? ""}
+                />
+                {/* 2026-09-07 新增：賣家電話——收購時留底用，對稱下面
+                    客戶電話（deal-form-modal.tsx）的做法。 */}
+                <Field label="賣家電話" name="seller_phone" defaultValue={car?.seller_phone ?? ""} />
               </div>
               <div className="mt-3">
                 <Field label="賣家地址" name="seller_address" defaultValue={car?.seller_address ?? ""} />
@@ -822,6 +833,8 @@ export function CarFormModal({
               <input type="hidden" name="seller_id_number" value={car?.seller_id_number ?? ""} />
               <input type="hidden" name="seller_address" value={car?.seller_address ?? ""} />
               <input type="hidden" name="seller_birthdate" value={car?.seller_birthdate ?? ""} />
+              <input type="hidden" name="seller_tax_id" value={car?.seller_tax_id ?? ""} />
+              <input type="hidden" name="seller_phone" value={car?.seller_phone ?? ""} />
             </>
           )}
 

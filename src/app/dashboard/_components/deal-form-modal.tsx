@@ -384,6 +384,25 @@ export function DealFormModal({
                   />
                 </div>
               </div>
+
+              {/* 2026-09-07 新增：買方統一編號／身分證字號——給「發票」
+                  功能記錄用，公司行號買家填統編、賣給個人填身分證字號，
+                  不會兩個都填。不是財務審核欄位，跟客戶姓名/電話同一
+                  層級，也可以直接在「發票」畫面單獨編輯這兩欄。 */}
+              <div className="grid grid-cols-2 gap-3">
+                <Field
+                  label="買方統一編號（選填）"
+                  name="buyer_tax_id"
+                  defaultValue={deal?.buyer_tax_id ?? ""}
+                  placeholder="公司行號開發票用"
+                />
+                <Field
+                  label="買方身分證字號（選填）"
+                  name="buyer_id_number"
+                  defaultValue={deal?.buyer_id_number ?? ""}
+                  placeholder="賣給個人時填"
+                />
+              </div>
             </>
           ) : (
             <>
@@ -426,6 +445,16 @@ export function DealFormModal({
                   </div>
                 </div>
               </div>
+
+              {/* 2026-09-07 新增：買方統一編號——給「發票」功能記錄用，
+                  跟客戶姓名/電話同一層級，不是財務審核欄位，一般業務
+                  也能填寫。 */}
+              <Field
+                label="買方統一編號（選填，公司行號開發票用）"
+                name="buyer_tax_id"
+                defaultValue={deal?.buyer_tax_id ?? ""}
+                placeholder="賣給個人可以留空"
+              />
             </>
           )}
 

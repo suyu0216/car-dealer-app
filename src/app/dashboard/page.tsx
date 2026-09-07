@@ -70,7 +70,11 @@ export default async function DashboardPage() {
         // closed_acquisition_bonus_cost——結帳封存的業務抽成／收購獎金
         // 快照，沒補進來的話車輛詳情頁「成本結構」永遠看不到這兩筆已經
         // 封存的真實成本，跟上面同一個教訓。
-        "id, tenant_id, brand, model_name, year, license_year, mileage, engine_cc, transmission, color, license_plate, vin, engine_number, has_spare_key, source_category, source_ledger_type, seller_name, seller_id_number, seller_address, seller_birthdate, certification, equipment_tags, condition_notes, status, purchase_price, transfer_fee, detailing_cost, repair_cost, floor_price, selling_price, final_price, final_cost_price, closed_at, closed_prep_cost, closed_commission_cost, closed_acquisition_bonus_cost, closed_total_cost, paid_amount, payment_method, purchase_account_id, payment_note, purchased_by, transfer_date, transfer_status, inspection_agency, inspection_date, inspection_status, title_at_company, nominee_company, nominee_days, nominee_start_date, id_return_date, has_used_as_nominee, is_public, body_type, is_featured, is_large_card, image_url, created_by, created_at, deleted_at"
+        // 2026-09-07：補進新增的 seller_tax_id／seller_phone（賣家統一
+        // 編號／電話，「發票」功能用，對稱 deals.buyer_tax_id／
+        // customer_phone），沒補的話跟上面幾次一樣，相關表單/畫面會
+        // 永遠讀到 undefined。
+        "id, tenant_id, brand, model_name, year, license_year, mileage, engine_cc, transmission, color, license_plate, vin, engine_number, has_spare_key, source_category, source_ledger_type, seller_name, seller_id_number, seller_address, seller_birthdate, seller_tax_id, seller_phone, certification, equipment_tags, condition_notes, status, purchase_price, transfer_fee, detailing_cost, repair_cost, floor_price, selling_price, final_price, final_cost_price, closed_at, closed_prep_cost, closed_commission_cost, closed_acquisition_bonus_cost, closed_total_cost, paid_amount, payment_method, purchase_account_id, payment_note, purchased_by, transfer_date, transfer_status, inspection_agency, inspection_date, inspection_status, title_at_company, nominee_company, nominee_days, nominee_start_date, id_return_date, has_used_as_nominee, is_public, body_type, is_featured, is_large_card, image_url, created_by, created_at, deleted_at"
       )
       .order("created_at", { ascending: false }),
     supabase
@@ -96,7 +100,11 @@ export default async function DashboardPage() {
         // 欄位——跟上面 body_type／車輛七欄同一個教訓，沒補進這個白名單
         // 的話，deal-form-modal.tsx 編輯合約時會永遠讀不到這個欄位目前
         // 的值，畫面上看起來像是每次都沒填過。
-        "id, tenant_id, car_id, customer_id, customer_name, customer_phone, final_price, deposit_amount, balance_amount, deposit_payment_method, balance_payment_method, deposit_account_id, balance_account_id, loan_status, salesperson_id, commission_amount, acquisition_commission_amount, status, note, created_at, delivered_at"
+        // 2026-09-07：同樣的教訓，補進新增的 buyer_tax_id／buyer_id_number
+        // （買方統一編號／身分證字號，「發票」功能用），沒補的話
+        // invoice-module.tsx／deal-form-modal.tsx 都會永遠讀到 undefined，
+        // 畫面看起來像是每次都沒填過。
+        "id, tenant_id, car_id, customer_id, customer_name, customer_phone, final_price, deposit_amount, balance_amount, deposit_payment_method, balance_payment_method, deposit_account_id, balance_account_id, loan_status, salesperson_id, commission_amount, acquisition_commission_amount, buyer_tax_id, buyer_id_number, status, note, created_at, delivered_at"
       )
       .order("created_at", { ascending: false }),
     supabase

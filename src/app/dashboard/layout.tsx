@@ -46,6 +46,7 @@ import {
   IconPalette,
   IconGear,
   IconContact,
+  IconReceipt,
 } from "./_components/nav-icons";
 
 export default async function DashboardLayout({
@@ -179,6 +180,16 @@ export default async function DashboardLayout({
         // 「公司帳務」同一組人、同一個群組。
         ...(permissions.canManageFinance
           ? [{ key: "reports", label: "報表分析", icon: <IconChart />, href: "/dashboard/reports" }]
+          : []),
+        // 2026-09-07 新增：「發票」——安安要手開發票，需要一眼看到每台
+        // 已售出車輛的完整資料鏈（入庫日期／過戶來源賣家／進貨金額／
+        // 售出金額／買方／買方統編），底下還嵌了 Simpany 的「手開發票
+        // 小幫手」試算小工具。會顯示進貨成本這種敏感財務欄位，跟「公司
+        // 帳務」「報表分析」不同，這裡用 canViewCost 把關（跟車輛庫存
+        // 管理看得到成本欄位的權限一致），不是 canManageFinance——店長
+        // 預設就有 canViewCost，也應該看得到這個功能才能協助開發票。
+        ...(permissions.canViewCost
+          ? [{ key: "invoices", label: "發票", icon: <IconReceipt />, href: "/dashboard?module=invoices", module: "invoices" }]
           : []),
       ],
     },

@@ -135,6 +135,17 @@ export function IconBriefcase(props: IconProps) {
   );
 }
 
+/** 2026-09-07 新增：發票——收據紙張（鋸齒下緣）＋條列文字，跟公司帳務
+ * 的公事包區分開來，一眼就能認出是「發票」相關功能。 */
+export function IconReceipt(props: IconProps) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M6 3.5h12v16.4l-2-1.3-2 1.3-2-1.3-2 1.3-2-1.3-2 1.3V3.5Z" />
+      <path d="M8.5 8h7M8.5 11h7M8.5 14h4.5" />
+    </svg>
+  );
+}
+
 /** 經營數據看板——長條圖。 */
 export function IconChart(props: IconProps) {
   return (

@@ -15,6 +15,7 @@ import { SettingsModule, type StaffAccount } from "./settings-module";
 import { BrandSettingsModule } from "./brand-settings-module";
 import { MyContactModule } from "./my-contact-module";
 import { OverviewModule } from "./overview-module";
+import { InvoiceModule } from "./invoice-module";
 
 type ModuleKey =
   | "overview"
@@ -25,6 +26,7 @@ type ModuleKey =
   | "deals"
   | "analytics"
   | "commission"
+  | "invoices"
   | "branding"
   | "settings"
   | "myContact";
@@ -38,6 +40,7 @@ const MODULE_KEYS: ModuleKey[] = [
   "deals",
   "analytics",
   "commission",
+  "invoices",
   "branding",
   "settings",
   "myContact",
@@ -147,6 +150,10 @@ export function DashboardShell({
     "tradeIns",
     "deals",
     "commission",
+    // 2026-09-07 新增：「發票」——會顯示進貨成本等敏感財務欄位，跟車輛
+    // 庫存管理看得到成本欄位同一組權限（canViewCost），不是
+    // canManageFinance，見 layout.tsx 側邊欄項目同一段說明。
+    ...(permissions.canViewCost ? (["invoices"] as ModuleKey[]) : []),
     // 2026-08-29：「車行經營數據看板」原本跟 canViewCost 綁在一起，現在
     // 拆成獨立的 canViewAnalytics 權限，兩者可以分開勾選（見
     // src/lib/permissions.ts 的說明）。
@@ -246,6 +253,7 @@ export function DashboardShell({
             canViewSalary={permissions.canViewSalary}
           />
         )}
+        {activeModule === "invoices" && permissions.canViewCost && <InvoiceModule cars={cars} deals={deals} />}
         {activeModule === "analytics" && permissions.canViewAnalytics && (
           <AnalyticsModule
             cars={cars}

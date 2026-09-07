@@ -178,6 +178,14 @@ export interface Car {
   seller_id_number: string | null;
   seller_address: string | null;
   seller_birthdate: string | null;
+  /** 2026-09-07 新增：賣家統一編號——跟公司行號收購車輛時才會填，跟
+   * 個人賣家收購時填的 seller_id_number 並存互斥，通常不會兩個都填。
+   * 對稱 deals.buyer_tax_id，一起給「發票」畫面（invoice-module.tsx）
+   * 直接編輯用，見 cars-actions.ts 的 updateCarSellerInfo()。 */
+  seller_tax_id: string | null;
+  /** 2026-09-07 新增：賣家電話——收購車輛時留底用，對稱
+   * deals.customer_phone（買方電話），一起給「發票」畫面直接編輯。 */
+  seller_phone: string | null;
   // 車況與認證
   certification: string | null;
   /** 逗號分隔的配備清單，例如 "電動座椅,倒車雷達,環景鏡頭"。 */
@@ -520,6 +528,17 @@ export interface Deal {
    * 不是取代關係）。NULL＝尚未指定帳戶（含所有舊資料）。 */
   deposit_account_id: string | null;
   balance_account_id: string | null;
+  /** 2026-09-07 新增：買方統一編號——公司行號買家、需要開立發票時才會
+   * 填，賣給個人時留空，給「發票」功能（invoice-module.tsx）記錄手開
+   * 發票用的買方資訊。不是敏感財務欄位，任何能編輯合約的角色都能填寫，
+   * 不像 commission_amount 限定 canManageFinance。 */
+  buyer_tax_id: string | null;
+  /** 2026-09-07 新增：買方身分證字號——賣給個人時記錄用，公司行號買家
+   * 通常留空改填 buyer_tax_id。跟 cars.seller_id_number（賣家身分證
+   * 字號）同一個概念，一個記收購來源、一個記賣出對象，一起給「發票」
+   * 畫面直接編輯（見 cars-actions.ts 的 updateCarSellerInfo()／
+   * deals-actions.ts 的 updateDealBuyerInfo()）。 */
+  buyer_id_number: string | null;
 }
 
 /** 公司營運開銷（水電/租金/廣告等跟特定車輛無關的固定支出），見
