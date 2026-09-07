@@ -71,6 +71,10 @@ interface ParsedCar {
   // 不是這裡的表單欄位。
   seller_name: string | null;
   seller_id_number: string | null;
+  // 2026-09-07 新增：賣家統一編號／電話，對稱 deals.buyer_tax_id／
+  // customer_phone，見 types.ts 對這兩欄的說明。
+  seller_tax_id: string | null;
+  seller_phone: string | null;
   seller_address: string | null;
   seller_birthdate: string | null;
   certification: string | null;
